@@ -431,7 +431,19 @@ impl Drop for SessionLock {
     }
 }
 
-#[cfg(unix)]
+// The browser has no other process to keep out (and its libc has no fcntl
+// record locks), so the web build's session lock is bookkeeping only.
+#[cfg(target_os = "emscripten")]
+fn posix_lock(_file: &fs::File) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "emscripten")]
+fn posix_lock_held_elsewhere(_file: &fs::File) -> bool {
+    false
+}
+
+#[cfg(all(unix, not(target_os = "emscripten")))]
 fn posix_lock(file: &fs::File) -> std::io::Result<()> {
     use std::os::unix::io::AsRawFd;
     // SAFETY: flock is plain data; zeroed is a valid whole-file request.
@@ -446,7 +458,7 @@ fn posix_lock(file: &fs::File) -> std::io::Result<()> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "emscripten")))]
 fn posix_lock_held_elsewhere(file: &fs::File) -> bool {
     use std::os::unix::io::AsRawFd;
     // SAFETY: as in `posix_lock`; F_GETLK only writes into `fl`.

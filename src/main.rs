@@ -75,9 +75,20 @@ use std::process::Command;
 use std::{env, fs, io::Write};
 
 // mimalloc scales far better than the system allocator under the concurrent
-// 4 KiB section-vec / hashmap churn of tile-parallel processing.
+// 4 KiB section-vec / hashmap churn of tile-parallel processing. The browser
+// build links Emscripten's own mimalloc instead (`-sMALLOC=mimalloc`).
+#[cfg(not(target_os = "emscripten"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// In the browser, HTTP goes through the page's own networking; the shim keeps
+// the `reqwest::blocking` API so no call site changes.
+#[cfg(target_os = "emscripten")]
+extern crate arnis_web_reqwest as reqwest;
+
+// The browser build's bridge to JavaScript (see web/README.md).
+#[cfg(target_os = "emscripten")]
+mod web;
 
 #[cfg(feature = "gui")]
 mod gui;
@@ -822,7 +833,7 @@ fn main() {
     attach_parent_console();
 
     // Only run CLI mode if the user supplied args.
-    #[cfg(feature = "gui")]
+    #[cfg(all(feature = "gui", not(target_os = "emscripten")))]
     {
         let gui_mode = std::env::args().len() == 1; // Just "arnis" with no args
         if gui_mode {

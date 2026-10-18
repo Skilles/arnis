@@ -1,3 +1,6 @@
+// The browser build answers some commands itself (see `web_dispatch`).
+#![cfg_attr(target_os = "emscripten", allow(dead_code, unused_variables))]
+
 use crate::args::Args;
 use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
@@ -16,13 +19,28 @@ use crate::world_editor::WorldFormat;
 use colored::Colorize;
 use fastnbt::Value;
 use flate2::read::GzDecoder;
+#[cfg(not(target_os = "emscripten"))]
 use log::LevelFilter;
+#[cfg(not(target_os = "emscripten"))]
 use rfd::FileDialog;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{env, fs, io::Write};
+#[cfg(not(target_os = "emscripten"))]
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind};
+
+// The desktop app runs on Tauri's async runtime and answers binary commands
+// with Tauri's IPC response; the browser build has its own stand-ins for both
+// (src/web.rs), so the commands below are shared as they are.
+#[cfg(not(target_os = "emscripten"))]
+use tauri::async_runtime as rt;
+#[cfg(not(target_os = "emscripten"))]
+use tauri::ipc::Response as IpcResponse;
+#[cfg(target_os = "emscripten")]
+use crate::web::rt;
+#[cfg(target_os = "emscripten")]
+use crate::web::BinaryResponse as IpcResponse;
 
 use crate::world_utils::SessionLock;
 
@@ -63,6 +81,7 @@ impl Drop for NewWorldCleanup {
     }
 }
 
+#[cfg(not(target_os = "emscripten"))]
 pub fn run_gui() -> Result<(), String> {
     // Configure thread pool with 90% CPU cap to keep system responsive
     crate::floodfill_cache::configure_rayon_thread_pool(0.9);
@@ -197,13 +216,13 @@ fn detect_minecraft_saves_directory() -> PathBuf {
 
 /// Returns the default save path (auto-detected on first run).
 /// The frontend stores/retrieves this via localStorage and passes it here for validation.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_default_save_path() -> String {
     detect_minecraft_saves_directory().display().to_string()
 }
 
 /// Returns the default directory for Bedrock .mcworld files (the Desktop).
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_default_bedrock_save_path() -> String {
     crate::world_utils::get_bedrock_output_directory()
         .display()
@@ -226,7 +245,7 @@ fn resolve_bedrock_output_dir(configured: &str) -> PathBuf {
 }
 
 /// Returns the default directory for Luanti/Minetest worlds.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_default_luanti_save_path() -> String {
     crate::world_utils::get_luanti_worlds_directory()
         .display()
@@ -257,7 +276,7 @@ struct AttributionRow {
     source_url: String,
 }
 
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_3d_model_attributions() -> Vec<AttributionRow> {
     crate::models_3d::wikidata::PERMISSIVE_ATTRIBUTIONS
         .iter()
@@ -276,7 +295,7 @@ fn gui_get_3d_model_attributions() -> Vec<AttributionRow> {
 
 /// Validates and returns a user-provided save path.
 /// Returns the path string if valid, or an error message.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_set_save_path(path: String) -> Result<String, String> {
     let p = PathBuf::from(&path);
     if !p.exists() {
@@ -294,7 +313,7 @@ fn gui_set_save_path(path: String) -> Result<String, String> {
 /// learns about the user's network never reached the log file users are asked
 /// to attach to bug reports. Routing it through `log` puts it in the same
 /// LogDir target as the backend's own output.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_log(level: String, message: String) {
     // The frontend is not a trusted formatter: cap the length so a runaway
     // handler cannot fill the log file, and keep it on one line so the file
@@ -330,22 +349,29 @@ fn fit_area_name(base_name: &str, area_name: String) -> Option<String> {
 /// whenever the user answers or flips it, so crashes before the first generation
 /// are covered and a withdrawal takes effect immediately rather than at the next
 /// generation.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_set_telemetry_consent(consent: bool) {
     telemetry::set_telemetry_consent(consent);
 }
 
 /// Opens a native folder-picker dialog and returns the chosen path.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_pick_save_directory(start_path: String) -> Result<String, String> {
+    // A browser cannot hand out real folders; worlds live in its private storage.
+    #[cfg(target_os = "emscripten")]
+    return Ok(start_path);
+    #[cfg(not(target_os = "emscripten"))]
     let start = PathBuf::from(&start_path);
-    let mut dialog = FileDialog::new();
-    if start.is_dir() {
-        dialog = dialog.set_directory(&start);
-    }
-    match dialog.pick_folder() {
-        Some(folder) => Ok(folder.display().to_string()),
-        None => Ok(start_path),
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        let mut dialog = FileDialog::new();
+        if start.is_dir() {
+            dialog = dialog.set_directory(&start);
+        }
+        match dialog.pick_folder() {
+            Some(folder) => Ok(folder.display().to_string()),
+            None => Ok(start_path),
+        }
     }
 }
 
@@ -359,7 +385,7 @@ fn gui_pick_save_directory(start_path: String) -> Result<String, String> {
 // `(async)` rather than a plain command: a bare `#[tauri::command]` runs on the
 // main thread, and this one copies a world template onto disk while the user is
 // looking at a button that has just gone grey.
-#[tauri::command(async)]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command(async))]
 fn gui_create_world(save_path: String, world_name: Option<String>) -> Result<String, i32> {
     let trimmed = save_path.trim();
     if trimmed.is_empty() {
@@ -713,29 +739,29 @@ pub fn update_player_spawn_y_after_generation(
 /// Fetches a reduced-resolution elevation + land-cover grid for the 3D
 /// terrain preview. Returns one raw binary blob (layout in preview_3d.rs)
 /// so megabytes of grid data skip JSON serialization.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 async fn gui_get_terrain_preview(
     bbox_text: String,
     aws_only: bool,
-) -> Result<tauri::ipc::Response, String> {
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
+) -> Result<IpcResponse, String> {
+    let bytes = rt::spawn_blocking(move || {
         crate::preview_3d::build_preview_payload(&bbox_text, aws_only)
     })
     .await
     .map_err(|e| format!("Preview task failed: {e}"))??;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(IpcResponse::new(bytes))
 }
 
 /// ESA land-cover grid for the 3D preview, fetched lazily when the user
 /// enables the overlay toggle (layout in preview_3d.rs).
-#[tauri::command]
-async fn gui_get_preview_landcover(bbox_text: String) -> Result<tauri::ipc::Response, String> {
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
+async fn gui_get_preview_landcover(bbox_text: String) -> Result<IpcResponse, String> {
+    let bytes = rt::spawn_blocking(move || {
         crate::preview_3d::build_landcover_grid(&bbox_text)
     })
     .await
     .map_err(|e| format!("Preview land cover task failed: {e}"))??;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(IpcResponse::new(bytes))
 }
 
 /// Facade wall quads for the 3D preview: lon/lat corners pushed clear of the
@@ -745,9 +771,9 @@ async fn gui_get_preview_landcover(bbox_text: String) -> Result<tauri::ipc::Resp
 /// Read from the facade cache, so whatever a generation or the Precompute
 /// button has already built for this area shows without a setting and without
 /// the network. An area nothing has been built for yields an empty list.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 async fn gui_get_preview_facades(bbox_text: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    rt::spawn_blocking(move || {
         crate::mapillary::facades::preview_walls_from_cache(&bbox_text)
     })
     .await
@@ -756,16 +782,16 @@ async fn gui_get_preview_facades(bbox_text: String) -> Result<String, String> {
 
 /// Overture building footprints for the 3D preview as GeoJSON. Size-gated;
 /// the frontend ignores all errors (buildings are a best-effort overlay).
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 async fn gui_get_preview_buildings(bbox_text: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    rt::spawn_blocking(move || {
         crate::preview_3d::build_buildings_geojson(&bbox_text)
     })
     .await
     .map_err(|e| format!("Preview buildings task failed: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -778,9 +804,9 @@ fn gui_get_version() -> String {
 /// `async` runs inline on the thread that owns the webview. On a network that
 /// drops the connection to GitHub rather than refusing it, that timeout was the
 /// window not repainting.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 async fn gui_get_update_info() -> Result<version_check::UpdateInfo, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+    rt::spawn_blocking(|| {
         version_check::check_for_updates().map_err(|e| format!("Update check failed: {e}"))
     })
     .await
@@ -788,7 +814,7 @@ async fn gui_get_update_info() -> Result<version_check::UpdateInfo, String> {
 }
 
 /// Compile-time target platform: "windows" / "macos" / "linux" / "unknown".
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_platform() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"
@@ -811,9 +837,9 @@ fn gui_get_platform() -> &'static str {
 /// facade run in it reaches tens of thousands of files, and the walk was
 /// freezing the window for seconds at a time; a late number is fine, a frozen
 /// window is not.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 async fn gui_get_cache_size() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(cache_size_string)
+    rt::spawn_blocking(cache_size_string)
         .await
         .map_err(|e| format!("Cache size task failed: {e}"))
 }
@@ -841,7 +867,7 @@ fn cache_size_string() -> String {
 /// The Mapillary imagery this generation used, one row per photograph, for the
 /// License and Credits panel. Mapillary imagery is CC BY-SA and every image has
 /// to name its photographer, so this is an obligation, not a nicety.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_mapillary_attributions() -> Vec<MapillaryCreditRow> {
     crate::mapillary::credits::list()
         .into_iter()
@@ -878,7 +904,7 @@ struct MapillaryCreditRow {
 /// The cache roots themselves are left on disk; only their *contents*
 /// are removed, so the next elevation/land-cover fetch doesn't have to
 /// recreate the directory tree.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 async fn gui_clear_tile_caches() -> Result<String, String> {
     // Held for the whole wipe, not checked once: a generation that took the
     // slot while the files were still going would read its caches out from
@@ -888,7 +914,7 @@ async fn gui_clear_tile_caches() -> Result<String, String> {
     // Off the webview thread for the same reason as `gui_get_cache_size`: the
     // cost is in the number of files, and a facade cache reaches tens of
     // thousands.
-    tauri::async_runtime::spawn_blocking(move || {
+    rt::spawn_blocking(move || {
         let _slot = slot;
         clear_tile_caches_now()
     })
@@ -934,7 +960,7 @@ fn clear_tile_caches_now() -> Result<String, String> {
 
 /// Returns the world map image data as base64 and geo bounds for overlay display.
 /// Returns None if the map image or metadata doesn't exist.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_get_world_map_data(world_path: String) -> Result<Option<WorldMapData>, String> {
     // Prefer the just-finished generation's preview; Bedrock has no world dir.
     if let Some(r) = map_preview::last_preview_result() {
@@ -1053,7 +1079,7 @@ fn one_world_dir(save_path: &str, world_name: &str) -> PathBuf {
     PathBuf::from(save_path.trim()).join(name)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command(async))]
 fn gui_one_world_info(save_path: String, world_name: String) -> Result<OneWorldInfo, String> {
     let world_path = one_world_dir(&save_path, &world_name);
     let manifest = crate::one_world::Manifest::load(&world_path)?;
@@ -1078,7 +1104,7 @@ fn gui_one_world_info(save_path: String, world_name: String) -> Result<OneWorldI
 }
 
 /// Chunks of the selected area that already exist in the One World.
-#[tauri::command(async)]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command(async))]
 fn gui_one_world_overlap(
     save_path: String,
     world_name: String,
@@ -1102,7 +1128,7 @@ struct OneWorldOverlays {
     areas: Vec<WorldMapData>,
 }
 
-#[tauri::command(async)]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command(async))]
 fn gui_get_one_world_overlays(world_path: String) -> Result<Option<OneWorldOverlays>, String> {
     let world_dir = PathBuf::from(world_path.trim());
     let Some(manifest) = crate::one_world::Manifest::load(&world_dir)? else {
@@ -1148,7 +1174,7 @@ fn gui_get_one_world_overlays(world_path: String) -> Result<Option<OneWorldOverl
 /// On Windows, opens files with the default application (e.g. .mcworld with Minecraft
 /// Bedrock), except OneDrive paths which are revealed in Explorer to avoid the shell's
 /// "cannot find" error on unsynced/placeholder files. Directories always open in Explorer.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_show_in_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -1238,12 +1264,12 @@ fn precompute_cancel() -> &'static Arc<std::sync::atomic::AtomicBool> {
 /// never leaves them wondering what happened. `Err` is only for a refusal or a
 /// failure; a run that was cancelled or found nothing is an `Ok` with `built`
 /// false, since neither is something the user did wrong.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 async fn gui_precompute_facades(
     bbox_text: String,
     mapillary_token: String,
 ) -> Result<PrecomputeOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || precompute_facades(&bbox_text, &mapillary_token))
+    rt::spawn_blocking(move || precompute_facades(&bbox_text, &mapillary_token))
         .await
         .map_err(|e| format!("Precompute task failed: {e}"))?
 }
@@ -1313,7 +1339,7 @@ fn precompute_facades(bbox_text: &str, token: &str) -> Result<PrecomputeOutcome,
 /// imagery search and the registration stage are each one call and neither is
 /// interruptible, so a cancel during the long middle of a cold run is noticed
 /// when that stage ends. Idempotent, and harmless when nothing is running.
-#[tauri::command]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command)]
 fn gui_cancel_precompute() {
     precompute_cancel().store(true, std::sync::atomic::Ordering::Release);
 }
@@ -1368,7 +1394,7 @@ impl Drop for BusySlot {
 // `#[tauri::command]` would run all of it on the main thread with the window
 // stalled behind it. `(async)` puts it on the async runtime instead, so the GUI
 // stays live from the click until the first progress event.
-#[tauri::command(async)]
+#[cfg_attr(not(target_os = "emscripten"), tauri::command(async))]
 #[allow(clippy::too_many_arguments)]
 #[allow(unused_variables)]
 fn gui_start_generation(
@@ -1521,10 +1547,10 @@ fn gui_start_generation(
         }
     }
 
-    tauri::async_runtime::spawn(async move {
+    rt::spawn(async move {
         // Held until the worker finishes, on every path, so the globals stay this run's.
         let _generation_slot = generation_slot;
-        if let Err(e) = tokio::task::spawn_blocking(move || {
+        if let Err(e) = rt::spawn_blocking(move || {
             let world_path = if one_world {
                 one_world_dir(&selected_world, &one_world_name)
             } else {
@@ -2110,6 +2136,113 @@ fn gui_start_generation(
     });
 
     Ok(())
+}
+
+/// The browser build's command table: the same commands, answered for the
+/// page by `crate::web` instead of by Tauri. Argument names are the Rust
+/// parameter names; `web::arg` also accepts the camelCase keys the
+/// JavaScript side sends.
+#[cfg(target_os = "emscripten")]
+pub(crate) fn web_dispatch(
+    cmd: &str,
+    args: &serde_json::Value,
+) -> Result<crate::web::Reply, serde_json::Value> {
+    use crate::web::{arg, json_result, json_value, rt::block_on, Reply};
+
+    macro_rules! a {
+        ($name:literal) => {
+            arg(args, $name)?
+        };
+    }
+
+    match cmd {
+        "gui_create_world" => json_result(gui_create_world(a!("save_path"), a!("world_name"))),
+        // Worlds and exports live in the app's own storage.
+        "gui_get_default_save_path" => json_value(crate::web::WORLDS_DIR),
+        "gui_get_default_bedrock_save_path" => json_value(crate::web::EXPORTS_DIR),
+        "gui_get_default_luanti_save_path" => json_value(crate::web::WORLDS_DIR),
+        "gui_set_save_path" => json_result(gui_set_save_path(a!("path"))),
+        "gui_pick_save_directory" => json_result(gui_pick_save_directory(a!("start_path"))),
+        "gui_start_generation" => json_result(gui_start_generation(
+            a!("bbox_text"),
+            a!("selected_world"),
+            a!("bedrock_save_path"),
+            a!("luanti_save_path"),
+            a!("world_scale"),
+            a!("height_multiplier"),
+            a!("ground_level"),
+            a!("terrain_enabled"),
+            a!("skip_osm_objects"),
+            a!("interior_enabled"),
+            a!("fillground_enabled"),
+            a!("caves_enabled"),
+            a!("legacy_trees_enabled"),
+            a!("max_tree_size"),
+            a!("canopy_height_enabled"),
+            a!("overture_enabled"),
+            a!("use_3d_enabled"),
+            a!("disable_height_limit"),
+            a!("aws_only_elevation"),
+            a!("bake_lighting_enabled"),
+            a!("voxy_lod_enabled"),
+            a!("is_new_world"),
+            a!("spawn_point"),
+            a!("telemetry_consent"),
+            a!("world_format"),
+            a!("rotation_angle"),
+            a!("gamemode"),
+            a!("world_time"),
+            a!("world_type"),
+            a!("map_item"),
+            a!("signage"),
+            a!("mapillary_token"),
+            a!("facades_enabled"),
+            a!("facade_mode"),
+            a!("building_facades_enabled"),
+            a!("facade_detail"),
+            a!("celestial_body_name"),
+            a!("pause_menu"),
+            a!("discoveries"),
+            a!("traffic_lights"),
+            a!("zombie_outbreak"),
+            a!("moving_cars"),
+            a!("body_gravity"),
+            a!("one_world"),
+            a!("one_world_name"),
+        )),
+        "gui_get_version" => json_value(gui_get_version()),
+        "gui_get_update_info" => json_result(block_on(gui_get_update_info())),
+        "gui_get_platform" => json_value("web"),
+        "gui_clear_tile_caches" => json_result(block_on(gui_clear_tile_caches())),
+        "gui_get_cache_size" => json_result(block_on(gui_get_cache_size())),
+        "gui_get_mapillary_attributions" => json_value(gui_get_mapillary_attributions()),
+        "gui_get_world_map_data" => json_result(gui_get_world_map_data(a!("world_path"))),
+        "gui_show_in_folder" => json_result(gui_show_in_folder(a!("path"))),
+        "gui_get_3d_model_attributions" => json_value(gui_get_3d_model_attributions()),
+        "gui_get_terrain_preview" => block_on(gui_get_terrain_preview(a!("bbox_text"), a!("aws_only")))
+            .map(Reply::from)
+            .map_err(serde_json::Value::String),
+        "gui_get_preview_landcover" => block_on(gui_get_preview_landcover(a!("bbox_text")))
+            .map(Reply::from)
+            .map_err(serde_json::Value::String),
+        "gui_get_preview_buildings" => json_result(block_on(gui_get_preview_buildings(a!("bbox_text")))),
+        "gui_get_preview_facades" => json_result(block_on(gui_get_preview_facades(a!("bbox_text")))),
+        "gui_precompute_facades" => json_result(block_on(gui_precompute_facades(
+            a!("bbox_text"),
+            a!("mapillary_token"),
+        ))),
+        "gui_cancel_precompute" => json_value(gui_cancel_precompute()),
+        "gui_one_world_info" => json_result(gui_one_world_info(a!("save_path"), a!("world_name"))),
+        "gui_one_world_overlap" => json_result(gui_one_world_overlap(
+            a!("save_path"),
+            a!("world_name"),
+            a!("bbox_text"),
+        )),
+        "gui_get_one_world_overlays" => json_result(gui_get_one_world_overlays(a!("world_path"))),
+        "gui_log" => json_value(gui_log(a!("level"), a!("message"))),
+        "gui_set_telemetry_consent" => json_value(gui_set_telemetry_consent(a!("consent"))),
+        _ => Err(serde_json::Value::String(format!("unknown command: {cmd}"))),
+    }
 }
 
 #[cfg(test)]

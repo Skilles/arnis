@@ -1,0 +1,20 @@
+# Settings for the browser build only (`web/build.sh`). Native builds use no
+# target section here and are unaffected.
+#
+# The generator is multithreaded (rayon, scoped threads), so the WebAssembly
+# module is built with shared memory and atomics, and Emscripten runs every
+# thread as a Web Worker. The standard library has to be rebuilt with the same
+# features, which `web/build.sh` asks nightly Cargo to do (`-Zbuild-std`).
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128,+nontrapping-fptoint,+sign-ext",
+    # The page calls `arnis_web_init` and `arnis_web_invoke`; keep them exported
+    # from what is otherwise an executable. The Emscripten link settings are
+    # in src/build.rs, so they reach the `arnis` binary and nothing else.
+    "-Z", "export-executable-symbols",
+]
+
+[env]
+# C dependencies (SQLite, zstd) must be built for shared memory too.
+CFLAGS_wasm32_unknown_emscripten = "-pthread -msimd128 -O2"
+CXXFLAGS_wasm32_unknown_emscripten = "-pthread -msimd128 -O2"

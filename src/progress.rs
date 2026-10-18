@@ -1,6 +1,9 @@
 use once_cell::sync::OnceCell;
 use serde_json::json;
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(target_os = "emscripten")]
+use crate::web::BrowserWindow as WebviewWindow;
+#[cfg(not(target_os = "emscripten"))]
 use tauri::{Emitter, WebviewWindow};
 
 pub static MAIN_WINDOW: OnceCell<WebviewWindow> = OnceCell::new();

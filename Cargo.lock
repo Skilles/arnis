@@ -193,6 +193,7 @@ dependencies = [
 name = "arnis"
 version = "3.3.0"
 dependencies = [
+ "arnis-web-reqwest",
  "base64 0.22.1",
  "bedrockrs_level",
  "bedrockrs_shared",
@@ -245,6 +246,16 @@ dependencies = [
  "windows 0.62.2",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "arnis-web-reqwest"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
 ]
 
 [[package]]
@@ -1729,8 +1740,6 @@ dependencies = [
 [[package]]
 name = "fs2"
 version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
 dependencies = [
  "libc",
  "winapi",
@@ -3037,17 +3046,6 @@ dependencies = [
 [[package]]
 name = "jsonwebtoken"
 version = "9.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
-dependencies = [
- "base64 0.22.1",
- "js-sys",
- "pem",
- "ring",
- "serde",
- "serde_json",
- "simple_asn1",
-]
 
 [[package]]
 name = "jsonwebtoken"

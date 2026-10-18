@@ -1,0 +1,12 @@
+[package]
+# Stands in for jsonwebtoken 9 inside bedrock-rs, which only names its error
+# type. The real crate pulls `js-sys` into the WebAssembly build, where it does
+# not compile, and `ring` into every build, for code Arnis never calls.
+name = "jsonwebtoken"
+version = "9.3.1"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
