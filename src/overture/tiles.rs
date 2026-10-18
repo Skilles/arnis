@@ -124,7 +124,7 @@ fn fetch_pool() -> Result<&'static rayon::ThreadPool> {
         std::sync::OnceLock::new();
     POOL.get_or_init(|| {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(fetch_thread_count())
+            .num_threads(crate::net::pool_threads(fetch_thread_count()))
             .thread_name(|i| format!("overture-tiles-{i}"))
             .build()
             .map_err(|e| format!("could not start the tile fetch pool: {e}"))

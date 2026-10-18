@@ -1594,7 +1594,7 @@ pub fn fetch(cfg: &FetchConfig) -> Result<Fetched, String> {
 /// connection limit instead of taking the whole global pool.
 fn in_pool<T: Send>(threads: usize, body: impl FnOnce() -> T + Send) -> T {
     match rayon::ThreadPoolBuilder::new()
-        .num_threads(threads.clamp(1, 32))
+        .num_threads(crate::net::pool_threads(threads.clamp(1, 32)))
         .build()
     {
         Ok(pool) => pool.install(body),

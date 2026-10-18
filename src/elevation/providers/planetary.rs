@@ -259,7 +259,7 @@ impl SourceWindow {
             .build()?;
 
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(MAX_CONCURRENT_DOWNLOADS)
+            .num_threads(crate::net::pool_threads(MAX_CONCURRENT_DOWNLOADS))
             .build()
             .map_err(|e| format!("Failed to create PDS fetch thread pool: {e}"))?;
 

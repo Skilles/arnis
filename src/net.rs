@@ -1,4 +1,5 @@
-//! Process-wide ceiling on in-flight HTTP requests.
+//! Process-wide ceiling on in-flight HTTP requests, and [`pool_threads`],
+//! the size of the per-provider download pools.
 
 use std::sync::{Condvar, Mutex};
 
@@ -7,6 +8,25 @@ use std::sync::{Condvar, Mutex};
 /// top of each other, which is what exhausts the Windows I/O resource limits
 /// the tokio driver panics on.
 const MAX_CONCURRENT_REQUESTS: usize = 16;
+
+/// Download pools in the browser build. Every thread there is a Web Worker
+/// started ahead of time from a fixed pool (one started on demand never
+/// runs), and each blocks on its request, so a few per provider is plenty.
+#[cfg(target_os = "emscripten")]
+const WEB_POOL_THREADS: usize = 3;
+
+/// How many threads a download pool that would like `wanted` should start.
+/// Unchanged natively; capped in the browser build.
+pub fn pool_threads(wanted: usize) -> usize {
+    #[cfg(target_os = "emscripten")]
+    {
+        wanted.clamp(1, WEB_POOL_THREADS)
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        wanted
+    }
+}
 
 static IN_FLIGHT: Mutex<usize> = Mutex::new(0);
 static SLOT_FREED: Condvar = Condvar::new();

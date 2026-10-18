@@ -34,6 +34,8 @@ extern "C" {
     fn wasmfs_create_directory(path: *const std::ffi::c_char, mode: u32, backend: *mut c_void) -> i32;
     /// JS: whether the page can offer OPFS to this worker.
     fn arnis_opfs_available() -> i32;
+    /// JS: set-up finished; 1 when files only last for this session.
+    fn arnis_engine_ready(memory_only: i32);
 }
 
 /// `errno` 0.2 (via rusty-leveldb) asks for the C symbol `errno_location` on
@@ -173,21 +175,21 @@ fn mount_storage() -> &'static str {
     }
 }
 
-/// Called once by the engine worker before anything else.
+/// Called once by the engine worker before anything else. Returns at once;
+/// the set-up runs on a thread of its own and reports through
+/// `arnis_engine_ready` when it is done.
 ///
-/// Returns 0 for persistent storage, 1 when the session is memory-only.
+/// Nothing here may block the module's main thread (the engine worker): it is
+/// the thread that starts every other thread. Mounting the private file
+/// system starts a helper thread and waits for it, which deadlocks when done
+/// from the main thread before the thread pool has finished loading. WebKit
+/// loads the pool slowly enough for that to happen.
 #[no_mangle]
-pub extern "C" fn arnis_web_init() -> i32 {
-    let storage = mount_storage();
-    for dir in [WORLDS_DIR, EXPORTS_DIR, CACHE_DIR] {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!("Failed to create {dir}: {e}");
-        }
-    }
-
-    // `dirs` resolves the cache, desktop and data folders from the XDG
-    // variables, so every cache the generator keeps lands in storage.
-    // SAFETY: called once at start-up before any other thread exists.
+pub extern "C" fn arnis_web_init() {
+    // The variables are set before any other thread exists. `dirs` resolves
+    // the cache, desktop and data folders from them, so every cache the
+    // generator keeps lands in the app's storage.
+    // SAFETY: no other thread has been started yet.
     unsafe {
         std::env::set_var("HOME", "/data");
         std::env::set_var("XDG_CACHE_HOME", CACHE_DIR);
@@ -195,13 +197,28 @@ pub extern "C" fn arnis_web_init() -> i32 {
         std::env::set_var("XDG_DESKTOP_DIR", EXPORTS_DIR);
     }
 
-    crate::progress::set_main_window(BrowserWindow);
-    crate::telemetry::install_panic_hook();
-    crate::floodfill_cache::configure_rayon_thread_pool(1.0);
-    crate::elevation_data::cleanup_old_cached_tiles();
+    let spawned = std::thread::Builder::new()
+        .name("arnis-init".to_string())
+        .spawn(|| {
+            let storage = mount_storage();
+            for dir in [WORLDS_DIR, EXPORTS_DIR, CACHE_DIR] {
+                if let Err(e) = std::fs::create_dir_all(dir) {
+                    eprintln!("Failed to create {dir}: {e}");
+                }
+            }
 
-    println!("Arnis web engine ready (storage: {storage}).");
-    i32::from(storage != "opfs")
+            crate::progress::set_main_window(BrowserWindow);
+            crate::telemetry::install_panic_hook();
+            crate::floodfill_cache::configure_rayon_thread_pool(1.0);
+            crate::elevation_data::cleanup_old_cached_tiles();
+
+            println!("Arnis web engine ready (storage: {storage}).");
+            // SAFETY: plain FFI; proxied to the main thread by Emscripten.
+            unsafe { arnis_engine_ready(i32::from(storage != "opfs")) };
+        });
+    if let Err(e) = spawned {
+        eprintln!("Failed to start the engine: {e}");
+    }
 }
 
 // ---------------------------------------------------------------------------

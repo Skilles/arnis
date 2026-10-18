@@ -183,17 +183,20 @@ addToLibrary({
   emscripten_err__proxy: 'sync',
   emscripten_err: (str) => err(UTF8ToString(str)),
 
-  arnis_opfs_available__sig: 'i',
-  arnis_opfs_available: () => {
-    try {
-      return typeof navigator !== 'undefined' &&
-        navigator.storage &&
-        typeof navigator.storage.getDirectory === 'function' &&
-        typeof FileSystemSyncAccessHandle !== 'undefined'
-        ? 1
-        : 0;
-    } catch (e) {
-      return 0;
+  // Runs on the engine worker's own thread, where engine-worker.js left a
+  // callback to announce readiness to the page.
+  arnis_engine_ready__proxy: 'async',
+  arnis_engine_ready__sig: 'vi',
+  arnis_engine_ready: (memoryOnly) => {
+    if (typeof self.arnisEngineReady === 'function') {
+      self.arnisEngineReady(memoryOnly);
     }
   },
+
+  // Answered on the engine worker's thread, where engine-worker.js has
+  // already tried the storage for real (see probeOpfs there): Safari's
+  // private browsing, for one, offers the API and then fails every write.
+  arnis_opfs_available__proxy: 'sync',
+  arnis_opfs_available__sig: 'i',
+  arnis_opfs_available: () => (self.arnisOpfsUsable === true ? 1 : 0),
 });

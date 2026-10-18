@@ -1217,7 +1217,7 @@ fn in_pool<T: Send>(threads: usize, body: impl FnOnce() -> T + Send) -> T {
         return body();
     }
     match rayon::ThreadPoolBuilder::new()
-        .num_threads(threads.clamp(1, 64))
+        .num_threads(crate::net::pool_threads(threads.clamp(1, 64)))
         .build()
     {
         Ok(pool) => pool.install(body),

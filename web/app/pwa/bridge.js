@@ -120,8 +120,33 @@
           : 'Error! The generator stopped unexpectedly.',
       });
     }
+    // A crash during a generation (usually memory) is worth one fresh start;
+    // an engine that cannot even start would otherwise restart forever.
+    const now = Date.now();
+    restarts = restarts.filter((t) => now - t < 60000);
+    if (restarts.length >= 3) {
+      setStatus(null);
+      showEngineFailedNotice(reason);
+      return;
+    }
+    restarts.push(now);
     setStatus('Restarting the generator…');
     setTimeout(startEngine, 1000);
+  }
+
+  let restarts = [];
+
+  function showEngineFailedNotice(reason) {
+    const notice = el(
+      'div',
+      { class: 'web-blocker', role: 'alert' },
+      el('h2', {}, 'The generator could not start'),
+      el('p', {}, `It stopped repeatedly in this browser (${String(reason).slice(0, 160)}).`),
+      el('p', {}, 'Reload the page to try again, or check this browser for missing features.'),
+      el('button', { type: 'button', class: 'web-button', onclick: () => location.reload() }, 'Reload'),
+      el('a', { href: new URL('diagnostics.html', base).href }, 'Check this browser'),
+    );
+    document.body.append(notice);
   }
 
   function post(cmd, args) {
@@ -216,6 +241,9 @@
   let wakeLock = null;
 
   async function requestWakeLock() {
+    if (wakeLock) {
+      return;
+    }
     try {
       if ('wakeLock' in navigator && document.visibilityState === 'visible') {
         wakeLock = await navigator.wakeLock.request('screen');
@@ -233,6 +261,29 @@
       requestWakeLock();
     }
   });
+
+  // Safari only grants the lock during a tap, and the GUI asks the engine for
+  // a world before it starts, which takes longer than a tap lasts. So the lock
+  // is taken here, on the tap that starts the generation, and released again
+  // if no run follows.
+  document.addEventListener(
+    'click',
+    (e) => {
+      const target = e.target && e.target.closest ? e.target.closest('#start-button, .world-name-row') : null;
+      if (!target || generating || e.target.closest('input, .world-name-edit-button')) {
+        return;
+      }
+      requestWakeLock().then(() => {
+        setTimeout(() => {
+          if (!generating && wakeLock) {
+            wakeLock.release().catch(() => {});
+            wakeLock = null;
+          }
+        }, 15000);
+      });
+    },
+    true,
+  );
 
   window.addEventListener('beforeunload', (e) => {
     if (generating) {
@@ -291,10 +342,148 @@
     generating = true;
     document.documentElement.classList.add('web-generating');
     requestWakeLock();
+    writeJournal({
+      startedAt: Date.now(),
+      bbox: args && args.bboxText,
+      format: args && args.worldFormat,
+      // A Java world is created before the run and is incomplete if it stops.
+      partialWorld: args && args.worldFormat === 'java' && !args.oneWorld ? args.selectedWorld : '',
+      hidden: false,
+    });
     return result;
   }
 
+  // --- Interrupted runs ---------------------------------------------------
+  //
+  // iOS closes a tab that uses too much memory and reloads it when it is
+  // shown again, and every browser may discard a background tab. The page
+  // then starts from scratch, so a note of the run in progress is kept to
+  // explain what happened and tidy up after it.
+
+  const JOURNAL_KEY = 'arnis-web-running';
+  const BBOX_KEY = 'arnis-web-last-bbox';
+
+  function writeJournal(entry) {
+    try {
+      localStorage.setItem(JOURNAL_KEY, JSON.stringify(entry));
+    } catch (e) {
+      // Storage refused: nothing to recover from later.
+    }
+  }
+
+  function readJournal() {
+    try {
+      return JSON.parse(localStorage.getItem(JOURNAL_KEY) || 'null');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function clearJournal() {
+    try {
+      localStorage.removeItem(JOURNAL_KEY);
+    } catch (e) {
+      // Nothing to clear.
+    }
+  }
+
+  function noteInJournal(field, value) {
+    if (!generating) {
+      return;
+    }
+    const entry = readJournal();
+    if (entry) {
+      entry[field] = value;
+      writeJournal(entry);
+    }
+  }
+
+  // Hidden and shown again, the run carries on; hidden for good, the browser
+  // froze or discarded the page in the background.
+  document.addEventListener('visibilitychange', () => {
+    noteInJournal('hidden', document.visibilityState === 'hidden');
+  });
+
+  // Reloading or leaving the page also hides it first, so this is what tells
+  // a reload apart from the background. An out-of-memory kill fires neither.
+  window.addEventListener('pagehide', () => noteInJournal('unloading', true));
+
+  async function recoverInterruptedRun() {
+    const entry = readJournal();
+    if (!entry) {
+      return;
+    }
+    clearJournal();
+    if (entry.partialWorld) {
+      post('web_remove_path', { path: entry.partialWorld }).catch(() => {});
+    }
+    // Older than a day: not worth mentioning.
+    if (Date.now() - (entry.startedAt || 0) > 86400000) {
+      return;
+    }
+    const message = entry.unloading
+      ? 'Your last generation stopped because the page was reloaded or closed. Your area is still selected; press Start Generation to run it again.'
+      : entry.hidden
+        ? 'Your last generation stopped because the browser paused Arnis in the background. Keep Arnis open on screen until the world is finished.'
+        : 'Your last generation stopped because the browser closed the page, most likely because it ran out of memory. Your area is still selected; try a smaller one.';
+    toast(message, 'warn', 0);
+  }
+
+  // The selected area survives a reload: the GUI keeps it only in memory.
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (data && typeof data.bboxText === 'string' && !data.type && data.bboxText.trim()) {
+      try {
+        localStorage.setItem(BBOX_KEY, data.bboxText.trim());
+      } catch (e) {
+        // Not remembered; harmless.
+      }
+    }
+  });
+
+  function restoreSelection() {
+    let saved = null;
+    try {
+      saved = localStorage.getItem(BBOX_KEY);
+    } catch (e) {
+      return;
+    }
+    const bounds = String(saved || '')
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(Number);
+    if (bounds.length !== 4 || bounds.some((n) => !Number.isFinite(n))) {
+      return;
+    }
+    const frame = document.querySelector('.map-container');
+    if (!frame) {
+      return;
+    }
+    // The map announces nothing when it is ready, so wait for the frame to
+    // load and Leaflet to set up, then hand it the area like the coordinate
+    // field in Settings does.
+    const send = () => {
+      setTimeout(() => {
+        if (frame.contentWindow) {
+          frame.contentWindow.postMessage({ type: 'setBbox', bounds }, '*');
+        }
+      }, 1200);
+    };
+    let ready = false;
+    try {
+      ready = frame.contentDocument && frame.contentDocument.readyState === 'complete';
+    } catch (e) {
+      ready = false;
+    }
+    if (ready) {
+      send();
+    } else {
+      frame.addEventListener('load', send, { once: true });
+    }
+  }
+
   function endGeneration() {
+    clearJournal();
     generating = false;
     document.documentElement.classList.remove('web-generating');
     if (wakeLock) {
@@ -752,7 +941,10 @@
     }
     setStatus('Loading the generator…');
     startEngine();
-    whenReady().then(() => refreshWorlds());
+    restoreSelection();
+    whenReady()
+      .then(() => recoverInterruptedRun())
+      .then(() => refreshWorlds());
   }
 
   if (document.readyState === 'loading') {

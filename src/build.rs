@@ -74,8 +74,13 @@ fn emit_web_link_args() {
         // Workers are started ahead of time: rayon and the per-command
         // threads are created while the page waits, and a pool avoids a
         // stall on each.
-        "-sPTHREAD_POOL_SIZE=Math.min(navigator.hardwareConcurrency||4,16)+6".to_string(),
-        "-sPTHREAD_POOL_SIZE_STRICT=0".to_string(),
+        // Every thread runs on a worker from this pool, started with the
+        // engine: a worker started on demand later never gets to run its
+        // thread, so the pool covers the busiest moment of a generation.
+        // engine-worker.js sizes it from the core count; an idle worker costs
+        // a few MB. Running out is an error rather than a silent hang.
+        "-sPTHREAD_POOL_SIZE=self.arnisPoolSize||32".to_string(),
+        "-sPTHREAD_POOL_SIZE_STRICT=2".to_string(),
         "-sENVIRONMENT=worker".to_string(),
         "-sMODULARIZE=1".to_string(),
         "-sEXPORT_NAME=createArnisEngine".to_string(),

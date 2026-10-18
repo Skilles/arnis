@@ -66,11 +66,12 @@ impl ElevationProvider for AwsTerrain {
 
         let num_tiles = tiles.len();
         println!(
-            "Downloading {num_tiles} elevation tiles from AWS (up to {MAX_CONCURRENT_DOWNLOADS} concurrent)..."
+            "Downloading {num_tiles} elevation tiles from AWS (up to {} concurrent)...",
+            crate::net::pool_threads(MAX_CONCURRENT_DOWNLOADS)
         );
 
         let thread_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(MAX_CONCURRENT_DOWNLOADS)
+            .num_threads(crate::net::pool_threads(MAX_CONCURRENT_DOWNLOADS))
             .build()
             .map_err(|e| format!("Failed to create thread pool: {e}"))?;
 

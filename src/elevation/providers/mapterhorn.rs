@@ -315,7 +315,7 @@ fn fetch_tile_pyramid(
         .build()?;
 
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(MAX_CONCURRENT_DOWNLOADS)
+        .num_threads(crate::net::pool_threads(MAX_CONCURRENT_DOWNLOADS))
         .build()
         .map_err(|e| format!("Failed to create tile-fetch thread pool: {e}"))?;
 
@@ -377,7 +377,7 @@ fn fetch_tile_pyramid(
         "Downloading {} elevation tiles from Mapterhorn at z{} (up to {} concurrent)...",
         level_keys.len(),
         z,
-        MAX_CONCURRENT_DOWNLOADS
+        crate::net::pool_threads(MAX_CONCURRENT_DOWNLOADS)
     );
 
     let mut narrated = false;

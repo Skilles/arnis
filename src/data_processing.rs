@@ -626,6 +626,21 @@ fn tile_processing_threads(pool_threads: usize, available_mb: u64, fillground: b
 }
 
 /// Free RAM in MB.
+///
+/// In the browser the operating system's figure means nothing: the engine is
+/// held to its own heap (at most 4 GB) and a phone closes a tab long before
+/// that. The page passes a budget for the device instead; an unknown budget
+/// would select the fastest, most memory-hungry path.
+#[cfg(target_os = "emscripten")]
+fn available_memory_mb() -> u64 {
+    std::env::var("ARNIS_WEB_MEMORY_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024)
+}
+
+/// Free RAM in MB.
+#[cfg(not(target_os = "emscripten"))]
 fn available_memory_mb() -> u64 {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();

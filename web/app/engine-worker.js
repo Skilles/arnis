@@ -26,6 +26,7 @@ const config = self.ARNIS_CONFIG || {};
 const engineUrl = new URL('engine/arnis.js', base).href;
 
 let engine = null;
+let ready = false;
 const queued = [];
 
 function log(level, text) {
@@ -69,18 +70,75 @@ self.onmessage = (e) => {
   if (!msg || msg.type !== 'invoke') {
     return;
   }
-  if (engine) {
+  if (ready) {
     invoke(msg);
   } else {
     queued.push(msg);
   }
 };
 
+const cores = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 32));
+const phone = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.userAgentData && navigator.userAgentData.mobile === true);
+
+// Workers for every thread a generation runs at its busiest: a pool per core
+// (generation, tile placement), a few download pools and the coordinating
+// threads. A worker started later never runs its thread, so this must not be
+// short; an idle one costs a few MB.
+function poolSize() {
+  return Math.min(2 * cores + 20, 80);
+}
+
+// The memory budget the generator plans with (MB). Phones close a tab far
+// below the engine's 4 GB ceiling, so they get a budget that makes it stream
+// regions to storage instead of holding the whole world.
+function memoryBudgetMb() {
+  if (phone) {
+    return 600;
+  }
+  const gb = navigator.deviceMemory || 8;
+  return Math.max(1024, Math.min(gb * 1024 * 0.4, 3000));
+}
+
+// Tries the private file system the way WasmFS will use it. The API being
+// present is not enough: private browsing modes offer it and then fail, and a
+// failure inside WasmFS takes the whole engine down.
+async function probeOpfs() {
+  if (!(self.navigator && navigator.storage && navigator.storage.getDirectory) ||
+    typeof FileSystemSyncAccessHandle === 'undefined') {
+    return false;
+  }
+  const attempt = (async () => {
+    const root = await navigator.storage.getDirectory();
+    const name = '.arnis-probe';
+    const file = await root.getFileHandle(name, { create: true });
+    const handle = await file.createSyncAccessHandle();
+    try {
+      handle.write(new Uint8Array([1]), { at: 0 });
+      handle.flush();
+    } finally {
+      handle.close();
+    }
+    await root.removeEntry(name).catch(() => {});
+    return true;
+  })();
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(false), 5000));
+  try {
+    return await Promise.race([attempt, timeout]);
+  } catch (e) {
+    log('info', `Private file storage unavailable (${e && e.name ? e.name : e}); worlds will last for this session only.`);
+    return false;
+  }
+}
+
 async function start() {
   if (typeof SharedArrayBuffer === 'undefined' || !self.crossOriginIsolated) {
     crash('This browser did not enable the isolation Arnis needs to run multithreaded (SharedArrayBuffer is unavailable).');
     return;
   }
+
+  self.arnisOpfsUsable = await probeOpfs();
+  self.arnisPoolSize = Number(new URLSearchParams(self.location.search).get('pool')) || poolSize();
 
   importScripts(engineUrl);
 
@@ -99,20 +157,25 @@ async function start() {
           module.ENV.ARNIS_CORS_RELAY = config.corsRelay;
         }
         module.ENV.RUST_BACKTRACE = '1';
+        module.ENV.ARNIS_WEB_MEMORY_MB = String(Math.round(memoryBudgetMb()));
       },
     ],
   });
 
-  const memoryOnly = engine._arnis_web_init();
-  postMessage({
-    type: 'ready',
-    storage: memoryOnly ? 'memory' : 'opfs',
-    threads: navigator.hardwareConcurrency || 0,
-  });
-
-  for (const msg of queued.splice(0)) {
-    invoke(msg);
-  }
+  // Set-up runs on an engine thread (it must not block this one) and calls
+  // back here when it is done.
+  self.arnisEngineReady = (memoryOnly) => {
+    ready = true;
+    postMessage({
+      type: 'ready',
+      storage: memoryOnly ? 'memory' : 'opfs',
+      threads: navigator.hardwareConcurrency || 0,
+    });
+    for (const msg of queued.splice(0)) {
+      invoke(msg);
+    }
+  };
+  engine._arnis_web_init();
 }
 
 start().catch((e) => crash(e && e.message ? e.message : e));
