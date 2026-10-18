@@ -108,7 +108,7 @@
     <ul id="browser"></ul>
 
     <h2>Data sources</h2>
-    <p>Green: reachable directly. Yellow: reachable through the relay set in config.js. Red: not reachable from this browser.</p>
+    <p>Green: this browser can read the source, directly or through the relay. Yellow: unreachable, but the generator does not need it. Red: unreachable and needed for that layer.</p>
     <ul id="sources"></ul>
 
     <h2>Report</h2>
@@ -226,8 +226,9 @@
       }
 
       const SOURCES = [
-        ['OpenStreetMap data (Arnis tile archive)', 'https://tiles.arnisproject.com/v1/archives.json', null, 'Buildings, roads and everything else on the map.'],
-        ['OpenStreetMap data (Arnis Overpass)', 'https://api.arnismc.com/overpass/api/interpreter?data=%5Bout%3Ajson%5D%3Bnode(1)%3Bout%3B', null, 'Used when the tile archive cannot answer.'],
+        ['OpenStreetMap data (Arnis tile archive)', 'https://tiles.arnisproject.com/v1/archives.json', null, 'Faster source of the same map data.'],
+        // Arnis's server only accepts queries with a global bbox, as generations send.
+        ['OpenStreetMap data (Arnis Overpass)', `https://api.arnismc.com/overpass/api/interpreter?data=${encodeURIComponent('[out:json][timeout:25][bbox:48.1370,11.5750,48.1372,11.5753];node;out count;')}`, null, 'Buildings, roads and everything else on the map.'],
         ['Place names (Nominatim)', 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=48.137&lon=11.575', null, 'Names the world after the area.'],
         ['Elevation (Mapterhorn)', 'https://tiles.mapterhorn.com/12/2138/1430.webp', null, 'Terrain heights.'],
         ['Elevation (AWS Terrain Tiles)', 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/12/2138/1430.png', null, 'Terrain heights, fallback.'],
@@ -253,26 +254,44 @@
         }
       }
 
+      // A source the generator reads is fine when the browser can read it
+      // directly or through the relay; only the answer it gets matters.
+      async function checkOne([name, url, range, purpose]) {
+        const direct = await probe(url, range);
+        // A readable answer, whatever its status, means the host lets this
+        // browser in (Mapillary answers a bare probe with 500, for one).
+        if (direct.ok) {
+          return { name, purpose, state: 'ok', detail: `Direct: HTTP ${direct.status}.` };
+        }
+        if (!relay) {
+          return { name, purpose, state: 'bad', detail: `${direct.error}. No relay configured.` };
+        }
+        const via = await probe(relay + encodeURIComponent(url), range);
+        if (via.ok && via.status < 400) {
+          return { name, purpose, state: 'ok', detail: `Through the relay: HTTP ${via.status}.` };
+        }
+        return {
+          name,
+          purpose,
+          state: 'bad',
+          detail: `Direct: ${direct.error}. Relay: ${via.ok ? `HTTP ${via.status}` : via.error}.`,
+        };
+      }
+
       async function checkSources() {
-        await Promise.all(
-          SOURCES.map(async ([name, url, range, purpose]) => {
-            const direct = await probe(url, range);
-            if (direct.ok) {
-              item('sources', 'ok', name, `${purpose} Direct: HTTP ${direct.status}.`);
-              return;
-            }
-            if (relay) {
-              const via = await probe(relay + encodeURIComponent(url), range);
-              if (via.ok && via.status < 400) {
-                item('sources', 'warn', name, `${purpose} Direct: ${direct.error}. Through the relay: HTTP ${via.status}.`);
-                return;
-              }
-              item('sources', 'bad', name, `${purpose} Direct: ${direct.error}. Relay: ${via.ok ? `HTTP ${via.status}` : via.error}.`);
-              return;
-            }
-            item('sources', 'bad', name, `${purpose} ${direct.error}. No relay configured.`);
-          }),
-        );
+        const results = await Promise.all(SOURCES.map(checkOne));
+        const byName = (n) => results.find((r) => r.name.startsWith(n));
+        const archive = byName('OpenStreetMap data (Arnis tile archive)');
+        const overpass = byName('OpenStreetMap data (Arnis Overpass)');
+        // The generator falls back from the archive to Overpass by itself, so
+        // a blocked archive is only a problem when Overpass is blocked too.
+        if (archive && overpass && archive.state === 'bad' && overpass.state === 'ok') {
+          archive.state = 'warn';
+          archive.detail += ' Not needed: map data comes from Overpass instead.';
+        }
+        for (const r of results) {
+          item('sources', r.state, r.name, `${r.purpose} ${r.detail}`);
+        }
       }
 
       document.getElementById('copy').addEventListener('click', async () => {
