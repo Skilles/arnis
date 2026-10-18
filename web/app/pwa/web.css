@@ -1,0 +1,639 @@
+/*
+ * Additions for the Arnis web app: the worlds panel, notices, and a layout
+ * that works on phones. Loaded after the GUI's own stylesheets and only in
+ * the web build, so the desktop app is unaffected.
+ */
+
+/* ---------------------------------------------------------------------- */
+/* Things the browser handles differently                                  */
+/* ---------------------------------------------------------------------- */
+
+/* Worlds live in browser storage; there are no folders to choose. */
+.arnis-web .settings-row:has(.save-path-control) {
+  display: none !important;
+}
+
+/* The worlds button sits between Start and Settings, so it has no corner. */
+.arnis-web .web-worlds-button {
+  border-radius: 0 !important;
+  position: relative;
+}
+
+.arnis-web .web-worlds-button .icon {
+  width: 22px;
+  height: 22px;
+  stroke: white;
+}
+
+.arnis-web .web-worlds-button[data-count]:not([data-count=''])::after {
+  content: attr(data-count);
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--primary-accent);
+  color: var(--ui-on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Status pill, toasts and the blocking notice                             */
+/* ---------------------------------------------------------------------- */
+
+.web-status {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 30000;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(30, 30, 30, 0.92);
+  color: var(--ui-text);
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.web-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 30001;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.web-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 14px;
+  border-radius: 10px;
+  background: #262626;
+  color: var(--ui-text);
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: left;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  border-left: 4px solid var(--ui-faint);
+}
+
+.web-toast span {
+  flex: 1;
+}
+
+.web-toast-ok {
+  border-left-color: #7bd864;
+}
+
+.web-toast-warn {
+  border-left-color: var(--primary-accent);
+}
+
+.web-toast-error {
+  border-left-color: #fa7878;
+}
+
+.web-toast button {
+  margin: 0;
+  box-shadow: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.web-toast-action {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--primary-accent);
+  color: var(--ui-on-accent);
+  font-weight: 600;
+}
+
+.web-toast-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-muted);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.web-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 40000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: rgba(30, 30, 30, 0.97);
+  color: var(--ui-text);
+  text-align: center;
+}
+
+.web-blocker h2 {
+  margin: 0;
+}
+
+.web-blocker p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--ui-muted);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Buttons used by the web additions                                       */
+/* ---------------------------------------------------------------------- */
+
+.web-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--ui-tile-border);
+  border-radius: 8px;
+  background: var(--ui-tile);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.web-button:hover:not(:disabled) {
+  background: var(--ui-tile-hover);
+}
+
+.web-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.web-button .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.web-button-primary {
+  border-color: transparent;
+  background: var(--primary-accent);
+  color: var(--ui-on-accent);
+}
+
+.web-button-primary:hover:not(:disabled) {
+  background: var(--primary-accent-dark);
+}
+
+.web-button-danger {
+  color: #ffb4bf;
+}
+
+.web-icon-button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-muted);
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.web-icon-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ui-text);
+}
+
+/* ---------------------------------------------------------------------- */
+/* The worlds sheet                                                        */
+/* ---------------------------------------------------------------------- */
+
+.web-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 25000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.web-sheet[hidden] {
+  display: none;
+}
+
+.web-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.web-sheet-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(80vh, 760px);
+  padding: 16px 20px 18px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  text-align: left;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+.web-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.web-sheet-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.web-worlds-intro,
+.web-worlds-usage {
+  margin: 6px 0 12px;
+  color: var(--ui-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.web-worlds-usage {
+  margin: 12px 0 0;
+}
+
+.web-worlds-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.web-worlds-empty {
+  padding: 24px 8px;
+  color: var(--ui-faint);
+  text-align: center;
+}
+
+.web-worlds-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--ui-card-border);
+  border-radius: 10px;
+  background: var(--ui-card);
+}
+
+.web-worlds-item.is-new {
+  border-color: var(--primary-accent);
+  box-shadow: 0 0 0 1px var(--primary-accent) inset;
+}
+
+.web-worlds-meta {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.web-worlds-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-worlds-detail {
+  color: var(--ui-muted);
+  font-size: 13px;
+}
+
+.web-worlds-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.web-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--ui-tile);
+  color: var(--ui-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.web-badge-java {
+  background: #3d5a2a;
+}
+
+.web-badge-bedrock {
+  background: #2f4a63;
+}
+
+.web-badge-luanti {
+  background: #5a3d63;
+}
+
+.web-progress {
+  flex-basis: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--ui-field);
+}
+
+.web-progress[hidden] {
+  display: none;
+}
+
+.web-progress-bar {
+  width: 0;
+  height: 100%;
+  background: var(--primary-accent);
+  transition: width 0.2s ease;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Phones and narrow windows                                               */
+/* ---------------------------------------------------------------------- */
+
+:root.arnis-web {
+  color-scheme: dark;
+}
+
+.arnis-web body {
+  overscroll-behavior: none;
+}
+
+@supports (height: 100dvh) {
+  .arnis-web .container {
+    height: 100dvh;
+  }
+}
+
+.arnis-web .container {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+@media (max-width: 820px) {
+  .arnis-web .container {
+    padding-top: calc(4px + env(safe-area-inset-top));
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+
+  .arnis-web #arnis-logo {
+    width: auto !important;
+    height: 34px !important;
+    padding: 2px 0;
+  }
+
+  .arnis-web .flex-container {
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    margin-top: 2px;
+    padding: 0 8px;
+  }
+
+  .arnis-web .map-box {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 260px;
+  }
+
+  .arnis-web .controls-box {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
+  .arnis-web .controls-content {
+    height: auto;
+    gap: 6px;
+    justify-content: flex-start;
+  }
+
+  .arnis-web .start-button {
+    min-height: 48px;
+  }
+
+  .arnis-web .format-toggle-btn {
+    min-height: 40px;
+  }
+
+  .arnis-web .bbox-selection-text {
+    margin: 6px 0 0;
+    font-size: 14px;
+  }
+
+  /* The mini 3D preview takes room the map needs; it stays one tap away
+     in the map toolbar. */
+  .arnis-web .preview3d-mini {
+    display: none !important;
+  }
+
+  .arnis-web .progress-section {
+    margin-top: 4px;
+  }
+
+  .arnis-web .footer {
+    display: none;
+  }
+
+  /* Settings: the sidebar becomes a strip of section tabs over the content. */
+  .arnis-web .settings-page {
+    flex-direction: column;
+  }
+
+  .arnis-web .settings-sidebar {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) 8px 8px;
+    border-right: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+  }
+
+  .arnis-web .settings-brand,
+  .arnis-web .settings-reset-button,
+  .arnis-web .settings-nav-sub,
+  .arnis-web .settings-nav-dot {
+    display: none !important;
+  }
+
+  .arnis-web .settings-nav {
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .arnis-web .settings-page .settings-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .arnis-web .settings-topbar {
+    padding: 10px 12px;
+  }
+
+  .arnis-web .settings-topbar p,
+  .arnis-web .settings-topbar-icon {
+    display: none;
+  }
+
+  .arnis-web .settings-topbar h2 {
+    font-size: 18px;
+  }
+
+  .arnis-web .settings-content {
+    gap: 12px;
+    padding: 10px 10px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .arnis-web .settings-section {
+    padding: 12px;
+  }
+
+  .arnis-web .setting-grid,
+  .arnis-web .settings-page .choice-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .arnis-web .settings-page .choice-cards .segment {
+    min-height: 0;
+  }
+
+  /* A tile's control drops under its label when both do not fit. */
+  .arnis-web .settings-page .setting-tile {
+    flex-wrap: wrap;
+  }
+
+  .arnis-web .setting-tile > .setting-label {
+    flex: 1 1 200px;
+  }
+
+  .arnis-web .settings-page .settings-control:has(input[type='range']),
+  .arnis-web .settings-page .settings-control:has(input[type='text']),
+  .arnis-web .settings-page .settings-control:has(input[type='password']) {
+    flex: 1 1 100%;
+  }
+
+  .arnis-web .settings-page input[type='text'],
+  .arnis-web .settings-page input[type='password'] {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .arnis-web .settings-page input[type='range'] {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Dialogs fill the width of a phone. */
+  .arnis-web .modal .dialog {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+
+  /* The worlds panel becomes a bottom sheet. */
+  .arnis-web .web-sheet {
+    align-items: flex-end;
+  }
+
+  .arnis-web .web-sheet-panel {
+    width: 100%;
+    max-height: 88dvh;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+  }
+
+  .arnis-web .web-worlds-actions {
+    width: 100%;
+  }
+
+  .arnis-web .web-worlds-actions .web-button {
+    flex: 1;
+    min-height: 42px;
+  }
+
+  /* At the top on phones, clear of the progress bar at the bottom. */
+  .arnis-web .web-toasts {
+    top: calc(8px + env(safe-area-inset-top));
+    bottom: auto;
+    left: 12px;
+    right: 12px;
+    max-width: none;
+  }
+}
+
+/* Landscape phones: map and controls side by side again, compactly. */
+@media (max-width: 960px) and (max-height: 500px) and (orientation: landscape) {
+  .arnis-web #arnis-logo {
+    display: none;
+  }
+
+  .arnis-web .flex-container {
+    flex-direction: row;
+  }
+
+  .arnis-web .map-box {
+    width: 62%;
+    min-height: 0;
+  }
+
+  .arnis-web .controls-box {
+    width: 38%;
+    overflow-y: auto;
+  }
+}
+
+html.web-sheet-open,
+html.web-sheet-open body {
+  overflow: hidden;
+}

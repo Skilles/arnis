@@ -1,0 +1,80 @@
+# Builds the Arnis web app (the generator compiled to WebAssembly plus the
+# GUI as a PWA) and publishes it to GitHub Pages. See web/README.md.
+#
+# One-time setup in the repository settings: Pages -> Build and deployment ->
+# Source: GitHub Actions.
+name: Web app (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'web/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - '.github/workflows/web-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  # The toolchains the web build is tested with. -Zbuild-std needs nightly.
+  RUST_TOOLCHAIN: nightly-2026-10-18
+  EMSDK_VERSION: 6.0.12
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal \
+            --component rust-src --target wasm32-unknown-emscripten
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: web-${{ env.RUST_TOOLCHAIN }}-${{ env.EMSDK_VERSION }}
+          cache-targets: true
+
+      - name: Build the engine
+        run: web/build.sh
+
+      - name: Assemble the site
+        run: node web/assemble.mjs
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

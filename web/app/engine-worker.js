@@ -16,8 +16,13 @@
  */
 'use strict';
 
-const config = self.ARNIS_ENGINE_CONFIG || {};
 const base = new URL('./', self.location.href);
+try {
+  importScripts(new URL('config.js', base).href);
+} catch (e) {
+  // Optional: without it every host is called directly.
+}
+const config = self.ARNIS_CONFIG || {};
 const engineUrl = new URL('engine/arnis.js', base).href;
 
 let engine = null;

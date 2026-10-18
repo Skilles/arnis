@@ -1,0 +1,9 @@
+# Cloudflare Worker for the Arnis web app's CORS relay (see README.md).
+name = "arnis-relay"
+main = "relay.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# Comma-separated sites allowed to use the relay, e.g. "https://you.github.io".
+# Empty allows any site.
+ALLOWED_ORIGINS = ""

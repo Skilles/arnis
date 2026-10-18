@@ -107,17 +107,34 @@ addToLibrary({
     }
     const body = bodyLen > 0 ? HEAPU8.slice(bodyPtr, bodyPtr + bodyLen) : null;
 
-    let result = arnisXhr(req, req.url, body);
-
     // Hosts that do not send CORS headers can be reached through a relay the
-    // site operator configures in config.js (see web/README.md). The relay is
-    // only tried after a direct attempt has failed outright.
+    // site operator configures in config.js (see web/relay). A host is tried
+    // directly first; once a direct attempt fails outright and the relay
+    // answers instead, this thread sends that host straight to the relay.
     const relay = req.relay;
-    if (result.outcome === 2 && relay && /^https?:\/\//.test(req.url)) {
-      const relayed = arnisXhr(req, relay + encodeURIComponent(req.url), body);
-      if (relayed.outcome === 0) {
-        relayed.head.url = req.url;
-        result = relayed;
+    let host = '';
+    try {
+      host = new URL(req.url).host;
+    } catch (e) {
+      // Not an absolute URL; the request will fail on its own.
+    }
+    const viaRelay = (globalThis.arnisRelayHosts ||= new Set());
+
+    let result = null;
+    if (relay && host && viaRelay.has(host)) {
+      result = arnisXhr(req, relay + encodeURIComponent(req.url), body);
+      if (result.outcome === 0) {
+        result.head.url = req.url;
+      }
+    } else {
+      result = arnisXhr(req, req.url, body);
+      if (result.outcome === 2 && relay && host) {
+        const relayed = arnisXhr(req, relay + encodeURIComponent(req.url), body);
+        if (relayed.outcome === 0) {
+          relayed.head.url = req.url;
+          viaRelay.add(host);
+          result = relayed;
+        }
       }
     }
 
@@ -156,6 +173,17 @@ addToLibrary({
     }
     postMessage({ type: 'reply', id, ok: !!ok, binary: false, data });
   },
+
+  // The generator's stdout and stderr. Emscripten's own versions print from
+  // whichever thread wrote, where nothing reaches the page; running them on
+  // the main thread sends them through the engine worker's print handlers.
+  emscripten_out__proxy: 'sync',
+  emscripten_out__sig: 'vp',
+  emscripten_out: (str) => out(UTF8ToString(str)),
+
+  emscripten_err__proxy: 'sync',
+  emscripten_err__sig: 'vp',
+  emscripten_err: (str) => err(UTF8ToString(str)),
 
   arnis_opfs_available__sig: 'i',
   arnis_opfs_available: () => {

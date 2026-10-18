@@ -445,7 +445,11 @@ fn list_outputs() -> Result<Vec<OutputEntry>, String> {
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
-            if !meta.is_file() {
+            // The Bedrock writer also leaves its map preview here.
+            let is_world = path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("mcworld"));
+            if !meta.is_file() || !is_world {
                 continue;
             }
             out.push(OutputEntry {
@@ -519,6 +523,11 @@ fn remove_path(path: &str) -> Result<(), String> {
     if p.is_dir() {
         std::fs::remove_dir_all(p).map_err(|e| e.to_string())
     } else if p.exists() {
+        // A Bedrock world's map preview sits beside it as "<name> map.png".
+        if let (Some(parent), Some(stem)) = (p.parent(), p.file_stem()) {
+            let preview = parent.join(format!("{} map.png", stem.to_string_lossy()));
+            let _ = std::fs::remove_file(preview);
+        }
         std::fs::remove_file(p).map_err(|e| e.to_string())
     } else {
         Ok(())

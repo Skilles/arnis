@@ -1,0 +1,6 @@
+{
+  "name": "arnis-relay",
+  "private": true,
+  "type": "module",
+  "description": "CORS relay for the Arnis web app"
+}

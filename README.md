@@ -12,6 +12,9 @@ _**Want mobile generation or larger map sizes?** [MapSmith](https://arnismc.com/
 ![Minecraft Preview](assets/git/preview.jpg)
 <i>This GitHub page and [arnismc.com](https://arnismc.com) are the only official project websites. Do not download Arnis from any other website.</i>
 
+## :globe_with_meridians: Web version (this fork)
+This fork also builds Arnis as a web app that runs entirely in your browser, on desktop and mobile, and installs as an app (PWA): **[skilles.github.io/arnis](https://skilles.github.io/arnis/)**. It is an unofficial build of the same generator; see [web/README.md](web/README.md) for how it works and how to build it.
+
 ## :keyboard: Usage
 <img width="60%" src="assets/git/gui.png"><br>
 Download the [latest release](https://github.com/louis-e/arnis/releases/) or [compile](#trophy-open-source) the project on your own.

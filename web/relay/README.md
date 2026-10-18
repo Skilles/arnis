@@ -1,0 +1,37 @@
+# Arnis CORS relay
+
+Some data sources Arnis reads don't send CORS headers, so a web page can't read
+them directly:
+
+| Host | Data | Without the relay |
+| --- | --- | --- |
+| `esa-worldcover.s3.eu-central-1.amazonaws.com` | ESA WorldCover land cover | Ground uses default blocks; water and land types come from OpenStreetMap only |
+| `dataforgood-fb-data.s3.amazonaws.com` | Meta canopy heights | The "canopy height" option has no effect |
+| `3dmr.eu`, `commons.wikimedia.org` | 3D landmark models | Landmarks fall back to regular buildings |
+| `tiles.arnisproject.com`, `api.arnismc.com` | OpenStreetMap data | Only needed if these don't allow browsers (open `diagnostics.html` on the site to check) |
+
+The relay fetches from those hosts only, adds CORS headers and passes the
+response through. Generation itself still runs in each visitor's browser. The
+engine always tries a host directly first and uses the relay only when that
+fails, so hosts that allow browsers never go through it.
+
+## Deploy on Cloudflare Workers (free tier is plenty)
+
+```sh
+cd web/relay
+npx wrangler deploy
+```
+
+Then set `corsRelay` in `web/app/config.js` to
+`https://arnis-relay.<your-subdomain>.workers.dev/?url=` and redeploy the site.
+
+## Deploy on Vercel
+
+Import this folder (`web/relay`) as a Vercel project, or run `npx vercel deploy`
+from it. Set `corsRelay` to `https://<project>.vercel.app/api/relay?url=`.
+
+## Limit who can use it
+
+Set `ALLOWED_ORIGINS` (Cloudflare: in `wrangler.toml` or the dashboard;
+Vercel: an environment variable) to your site, for example
+`https://skilles.github.io`. Other sites are then refused.

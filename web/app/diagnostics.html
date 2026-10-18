@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#333333" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+  <title>Arnis – Browser check</title>
+  <script src="./config.js"></script>
+  <script src="./pwa/build-info.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #333333;
+      --card: #3a3a3a;
+      --border: #4a4a4a;
+      --text: #f2f2f2;
+      --muted: #b8b8b8;
+      --ok: #7bd864;
+      --warn: #fecc44;
+      --bad: #fa7878;
+    }
+    body {
+      margin: 0;
+      padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.45 Inter, Avenir, Helvetica, Arial, sans-serif;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+    }
+    h2 {
+      margin: 24px 0 8px;
+      font-size: 16px;
+    }
+    p {
+      margin: 0 0 12px;
+      color: var(--muted);
+    }
+    a {
+      color: var(--warn);
+    }
+    ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    li {
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 2px 10px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--card);
+    }
+    .dot {
+      grid-row: span 2;
+      width: 12px;
+      height: 12px;
+      margin-top: 5px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .ok .dot { background: var(--ok); }
+    .warn .dot { background: var(--warn); }
+    .bad .dot { background: var(--bad); }
+    .name { font-weight: 600; }
+    .detail { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+    button {
+      min-height: 40px;
+      padding: 0 16px;
+      border: none;
+      border-radius: 8px;
+      background: var(--warn);
+      color: #1c1c1c;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    textarea {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 140px;
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #2a2a2a;
+      color: var(--text);
+      font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Browser check</h1>
+    <p>Checks that this browser can run the Arnis generator and reach each data source. Nothing is sent anywhere except the test requests themselves. <a href="./">Back to Arnis</a></p>
+
+    <h2>This browser</h2>
+    <ul id="browser"></ul>
+
+    <h2>Data sources</h2>
+    <p>Green: reachable directly. Yellow: reachable through the relay set in config.js. Red: not reachable from this browser.</p>
+    <ul id="sources"></ul>
+
+    <h2>Report</h2>
+    <p>Copy this when reporting a problem.</p>
+    <button type="button" id="copy">Copy report</button>
+    <textarea id="report" readonly></textarea>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const relay = (self.ARNIS_CONFIG && self.ARNIS_CONFIG.corsRelay) || '';
+      const report = [];
+
+      function item(list, state, name, detail) {
+        const li = document.createElement('li');
+        li.className = state;
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        const n = document.createElement('span');
+        n.className = 'name';
+        n.textContent = name;
+        const d = document.createElement('span');
+        d.className = 'detail';
+        d.textContent = detail;
+        li.append(dot, n, d);
+        document.getElementById(list).append(li);
+        report.push(`[${state}] ${name}: ${detail}`);
+        document.getElementById('report').value = report.join('\n');
+      }
+
+      function wasmFeature(bytes) {
+        try {
+          return WebAssembly.validate(new Uint8Array(bytes));
+        } catch (e) {
+          return false;
+        }
+      }
+
+      // Tiny modules that only validate when a feature is supported.
+      const SIMD = [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11];
+      const THREADS = [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 5, 4, 1, 3, 1, 1, 10, 11, 1, 9, 0, 65, 0, 254, 16, 2, 0, 26, 11];
+      const EXCEPTIONS = [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 8, 1, 6, 0, 6, 64, 25, 11, 11];
+
+      async function checkBrowser() {
+        const build = self.ARNIS_BUILD ? `${self.ARNIS_BUILD.version} (${self.ARNIS_BUILD.commit})` : 'unknown';
+        item('browser', 'ok', 'Arnis build', build);
+        item('browser', 'ok', 'User agent', navigator.userAgent);
+        item(
+          'browser',
+          self.crossOriginIsolated ? 'ok' : 'bad',
+          'Cross-origin isolation',
+          self.crossOriginIsolated
+            ? 'Enabled, so the generator can use several threads.'
+            : 'Off. Reload once; if it stays off, this browser (or private mode) blocks it.',
+        );
+        item(
+          'browser',
+          typeof SharedArrayBuffer !== 'undefined' ? 'ok' : 'bad',
+          'SharedArrayBuffer',
+          typeof SharedArrayBuffer !== 'undefined' ? 'Available' : 'Missing',
+        );
+        const features = [
+          ['threads', wasmFeature(THREADS)],
+          ['SIMD', wasmFeature(SIMD)],
+          ['exceptions', wasmFeature(EXCEPTIONS)],
+        ];
+        const missing = features.filter(([, ok]) => !ok).map(([n]) => n);
+        item(
+          'browser',
+          missing.length ? 'bad' : 'ok',
+          'WebAssembly features',
+          missing.length ? `Missing: ${missing.join(', ')}. Update the browser.` : 'Threads, SIMD and exceptions are supported.',
+        );
+        // Synchronous file access, which the engine uses, exists only in workers.
+        const opfs = await new Promise((resolve) => {
+          if (!(navigator.storage && navigator.storage.getDirectory)) {
+            resolve(false);
+            return;
+          }
+          try {
+            const src = "postMessage(typeof FileSystemSyncAccessHandle !== 'undefined')";
+            const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+            w.onmessage = (e) => {
+              resolve(e.data === true);
+              w.terminate();
+            };
+            w.onerror = () => resolve(false);
+          } catch (e) {
+            resolve(false);
+          }
+        });
+        item(
+          'browser',
+          opfs ? 'ok' : 'warn',
+          'Private file storage (OPFS)',
+          opfs ? 'Available: worlds are kept between visits.' : 'Not available: worlds last only until the tab closes.',
+        );
+        try {
+          const { usage, quota } = await navigator.storage.estimate();
+          const gb = (n) => `${(n / 1073741824).toFixed(2)} GB`;
+          item('browser', quota > 1073741824 ? 'ok' : 'warn', 'Storage quota', `${gb(usage)} used of ${gb(quota)}`);
+        } catch (e) {
+          item('browser', 'warn', 'Storage quota', 'Unknown');
+        }
+        const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
+        item('browser', persisted ? 'ok' : 'warn', 'Persistent storage', persisted ? 'Granted' : 'Not granted yet (asked after your first world)');
+        item(
+          'browser',
+          'ok',
+          'Processor and memory',
+          `${navigator.hardwareConcurrency || '?'} threads${navigator.deviceMemory ? `, about ${navigator.deviceMemory} GB memory` : ''}`,
+        );
+      }
+
+      const SOURCES = [
+        ['OpenStreetMap data (Arnis tile archive)', 'https://tiles.arnisproject.com/v1/archives.json', null, 'Buildings, roads and everything else on the map.'],
+        ['OpenStreetMap data (Arnis Overpass)', 'https://api.arnismc.com/overpass/api/interpreter?data=%5Bout%3Ajson%5D%3Bnode(1)%3Bout%3B', null, 'Used when the tile archive cannot answer.'],
+        ['Place names (Nominatim)', 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=48.137&lon=11.575', null, 'Names the world after the area.'],
+        ['Elevation (Mapterhorn)', 'https://tiles.mapterhorn.com/12/2138/1430.webp', null, 'Terrain heights.'],
+        ['Elevation (AWS Terrain Tiles)', 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/12/2138/1430.png', null, 'Terrain heights, fallback.'],
+        ['Land cover (ESA WorldCover)', 'https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N48E009_Map.tif', 'bytes=0-99', 'Water, forest and built-up areas.'],
+        ['Canopy heights (Meta)', 'https://dataforgood-fb-data.s3.amazonaws.com/forests/v1/alsgedi_global_v6_float/chm/120221303.tif', 'bytes=0-99', 'Optional tree heights.'],
+        ['Overture buildings', 'https://stac.overturemaps.org/catalog.json', null, 'Optional extra building footprints.'],
+        ['Street imagery (Mapillary)', 'https://graph.mapillary.com/', null, 'Optional photo facades; needs your own token.'],
+        ['3D landmarks (3DMR)', 'https://3dmr.eu/', null, 'Optional landmark models.'],
+      ];
+
+      async function probe(url, range) {
+        const headers = range ? { Range: range } : {};
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        try {
+          const res = await fetch(url, { headers, mode: 'cors', credentials: 'omit', cache: 'no-store', signal: controller.signal });
+          // Any status means the browser was allowed to read the answer.
+          return { ok: true, status: res.status };
+        } catch (e) {
+          return { ok: false, error: e && e.name === 'AbortError' ? 'timed out' : 'blocked (no CORS headers) or unreachable' };
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function checkSources() {
+        await Promise.all(
+          SOURCES.map(async ([name, url, range, purpose]) => {
+            const direct = await probe(url, range);
+            if (direct.ok) {
+              item('sources', 'ok', name, `${purpose} Direct: HTTP ${direct.status}.`);
+              return;
+            }
+            if (relay) {
+              const via = await probe(relay + encodeURIComponent(url), range);
+              if (via.ok && via.status < 400) {
+                item('sources', 'warn', name, `${purpose} Direct: ${direct.error}. Through the relay: HTTP ${via.status}.`);
+                return;
+              }
+              item('sources', 'bad', name, `${purpose} Direct: ${direct.error}. Relay: ${via.ok ? `HTTP ${via.status}` : via.error}.`);
+              return;
+            }
+            item('sources', 'bad', name, `${purpose} ${direct.error}. No relay configured.`);
+          }),
+        );
+      }
+
+      document.getElementById('copy').addEventListener('click', async () => {
+        const text = document.getElementById('report').value;
+        try {
+          await navigator.clipboard.writeText(text);
+          document.getElementById('copy').textContent = 'Copied';
+        } catch (e) {
+          document.getElementById('report').select();
+        }
+      });
+
+      checkBrowser().then(checkSources);
+    })();
+  </script>
+</body>
+</html>

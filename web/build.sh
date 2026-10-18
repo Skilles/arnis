@@ -17,7 +17,7 @@ if [[ "${1:-}" == "--dev" ]]; then
   shift
 fi
 
-cargo +nightly build "${cargo_profile[@]}" \
+cargo "+${RUST_TOOLCHAIN:-nightly}" build "${cargo_profile[@]}" \
   --target wasm32-unknown-emscripten \
   -Zbuild-std=std,panic_unwind \
   "$@"
