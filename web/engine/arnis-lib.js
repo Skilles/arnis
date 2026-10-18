@@ -178,11 +178,9 @@ addToLibrary({
   // whichever thread wrote, where nothing reaches the page; running them on
   // the main thread sends them through the engine worker's print handlers.
   emscripten_out__proxy: 'sync',
-  emscripten_out__sig: 'vp',
   emscripten_out: (str) => out(UTF8ToString(str)),
 
   emscripten_err__proxy: 'sync',
-  emscripten_err__sig: 'vp',
   emscripten_err: (str) => err(UTF8ToString(str)),
 
   arnis_opfs_available__sig: 'i',
