@@ -9,5 +9,5 @@
  * that refuse browsers are skipped. See web/relay/ for a ready-made relay.
  */
 self.ARNIS_CONFIG = {
-  corsRelay: '',
+  corsRelay: 'https://arnis-relay.vercel.app/api/relay?url=',
 };

@@ -81,12 +81,18 @@ serving `Cross-Origin-Opener-Policy: same-origin` and
 
 ## Data sources and the optional relay
 
-Most sources allow browsers to read them. A few don't send CORS headers: ESA
-WorldCover land cover, Meta canopy heights and the 3D landmark hosts. Without
-help, generation still works but skips those layers. `web/relay/` is a small,
-host-allowlisted relay that fixes this; deploy it (Cloudflare Workers or
-Vercel, both free) and set `corsRelay` in `web/app/config.js`. See
-`web/relay/README.md`.
+Elevation, place names and Overture allow browsers to read them. The rest
+don't send CORS headers, including both OpenStreetMap sources (Arnis's tile
+archive and Overpass server), so **the relay is required for buildings and
+roads**. `web/relay/` is a small, host-allowlisted relay; deploy it
+(Cloudflare Workers or Vercel, both free) and set `corsRelay` in
+`web/app/config.js`. See `web/relay/README.md`. This fork's site uses the one
+at `arnis-relay.vercel.app`.
+
+The tile archive sits behind Cloudflare bot protection that blocks the relay
+too, so the web build gets OpenStreetMap data from Arnis's Overpass server.
+Both are run by the Arnis project; asking upstream to send
+`Access-Control-Allow-Origin` on them would remove the need for the relay.
 
 Open `diagnostics.html` on the deployed site to see which sources a given
 browser can reach.

@@ -8,12 +8,17 @@ them directly:
 | `esa-worldcover.s3.eu-central-1.amazonaws.com` | ESA WorldCover land cover | Ground uses default blocks; water and land types come from OpenStreetMap only |
 | `dataforgood-fb-data.s3.amazonaws.com` | Meta canopy heights | The "canopy height" option has no effect |
 | `3dmr.eu`, `commons.wikimedia.org` | 3D landmark models | Landmarks fall back to regular buildings |
-| `tiles.arnisproject.com`, `api.arnismc.com` | OpenStreetMap data | Only needed if these don't allow browsers (open `diagnostics.html` on the site to check) |
+| `api.arnismc.com` | OpenStreetMap data (Arnis's Overpass server) | **No buildings or roads at all** |
+| `tiles.arnisproject.com` | OpenStreetMap data (Arnis tile archive) | Behind Cloudflare bot protection, which also blocks the relay; the generator falls back to Overpass automatically |
 
 The relay fetches from those hosts only, adds CORS headers and passes the
 response through. Generation itself still runs in each visitor's browser. The
 engine always tries a host directly first and uses the relay only when that
 fails, so hosts that allow browsers never go through it.
+
+This fork's relay runs at `https://arnis-relay.vercel.app/api/relay?url=`
+(Vercel project `arnis-relay`), limited to requests from
+`https://skilles.github.io`.
 
 ## Deploy on Cloudflare Workers (free tier is plenty)
 

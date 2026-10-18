@@ -105,7 +105,7 @@ export async function handleRelay(request, allowedOrigins = []) {
       headers.set(name, value);
     }
   }
-  headers.set('User-Agent', 'Arnis-Web-Relay/1.0 (+https://github.com/louis-e/arnis)');
+  headers.set('User-Agent', 'Arnis-Web-Relay/1.0 (+https://github.com/Skilles/arnis)');
 
   const body = request.method === 'POST' ? await request.arrayBuffer() : undefined;
 
