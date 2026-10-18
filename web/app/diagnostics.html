@@ -8,6 +8,9 @@
   <title>Arnis – Browser check</title>
   <script src="./config.js"></script>
   <script src="./pwa/build-info.js"></script>
+  <!-- Same isolation bootstrap as the app, so a first visit here is checked
+       the way the app will run. -->
+  <script src="./pwa/coi.js"></script>
   <style>
     :root {
       color-scheme: dark;
