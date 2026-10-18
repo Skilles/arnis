@@ -41,7 +41,35 @@
     }
   }
 
+  let currentStage = '';
+  let slowNotice = null;
+
+  // Start-up normally takes seconds; a first visit downloads about 20 MB.
+  // Past a minute something is wrong, and saying so beats a status line that
+  // never changes.
+  function watchStartup() {
+    const started = Date.now();
+    setTimeout(() => {
+      if (engineReady || !worker) {
+        return;
+      }
+      const seconds = Math.round((Date.now() - started) / 1000);
+      slowNotice = el(
+        'div',
+        { class: 'web-toast web-toast-warn web-startup-slow' },
+        el('span', {}, `The generator has not started after ${seconds} seconds (${currentStage || 'loading'}). A slow connection can take longer on the first visit; otherwise reload the page.`),
+        el('button', { type: 'button', class: 'web-toast-action', onclick: () => location.reload() }, 'Reload'),
+        el('a', { class: 'web-toast-link', href: new URL('diagnostics.html', base).href }, 'Check'),
+      );
+      if (!toastHost) {
+        toast('', 'info', 1);
+      }
+      toastHost.append(slowNotice);
+    }, 60000);
+  }
+
   function startEngine() {
+    watchStartup();
     worker = new Worker(new URL('engine-worker.js', base), { name: 'arnis-engine' });
     worker.onmessage = (e) => onEngineMessage(e.data);
     worker.onerror = (e) => onCrash(e.message || 'the generator failed to start');
@@ -53,6 +81,10 @@
         engineReady = true;
         engineInfo = msg;
         setStatus(null);
+        if (slowNotice) {
+          slowNotice.remove();
+          slowNotice = null;
+        }
         if (msg.storage === 'memory') {
           toast('This browser cannot keep files, so download each world before closing the tab.', 'warn', 9000);
         }
@@ -78,6 +110,12 @@
       }
       case 'event':
         onEngineEvent(msg.name, msg.payload);
+        break;
+      case 'stage':
+        currentStage = msg.text;
+        if (!engineReady) {
+          setStatus(msg.text);
+        }
         break;
       case 'log':
         if (msg.level === 'error') {

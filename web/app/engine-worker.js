@@ -23,7 +23,12 @@ try {
   // Optional: without it every host is called directly.
 }
 const config = self.ARNIS_CONFIG || {};
-const engineUrl = new URL('engine/arnis.js', base).href;
+// Replaced with the build id by web/assemble.mjs. The engine files are
+// requested under it, so the browser's HTTP cache (ten minutes on GitHub
+// Pages) can never pair this script with an engine from another build.
+const BUILD = '__ARNIS_BUILD__';
+const engineFile = (name) => new URL(`engine/${name}?v=${encodeURIComponent(BUILD)}`, base).href;
+const engineUrl = engineFile('arnis.js');
 
 let engine = null;
 let ready = false;
@@ -31,6 +36,11 @@ const queued = [];
 
 function log(level, text) {
   postMessage({ type: 'log', level, text: String(text) });
+}
+
+// Where start-up has got to, shown on the page while it waits.
+function stage(text) {
+  postMessage({ type: 'stage', text });
 }
 
 function crash(reason) {
@@ -137,16 +147,18 @@ async function start() {
     return;
   }
 
+  stage('Checking storage…');
   self.arnisOpfsUsable = await probeOpfs();
   self.arnisPoolSize = Number(new URLSearchParams(self.location.search).get('pool')) || poolSize();
 
+  stage('Downloading the generator…');
   importScripts(engineUrl);
 
   engine = await createArnisEngine({
     // Emscripten starts its thread workers from this script's URL; inside a
     // worker it cannot work that out by itself.
     mainScriptUrlOrBlob: engineUrl,
-    locateFile: (path) => new URL(`engine/${path}`, base).href,
+    locateFile: (path) => engineFile(path),
     print: (text) => log('info', text),
     printErr: (text) => log('error', text),
     onAbort: (reason) => crash(`The generator stopped unexpectedly: ${reason}`),
@@ -162,6 +174,8 @@ async function start() {
     ],
   });
 
+  stage(`Starting the generator (${self.arnisPoolSize} threads)…`);
+
   // Set-up runs on an engine thread (it must not block this one) and calls
   // back here when it is done.
   self.arnisEngineReady = (memoryOnly) => {
@@ -170,6 +184,8 @@ async function start() {
       type: 'ready',
       storage: memoryOnly ? 'memory' : 'opfs',
       threads: navigator.hardwareConcurrency || 0,
+      pool: self.arnisPoolSize,
+      build: BUILD,
     });
     for (const msg of queued.splice(0)) {
       invoke(msg);

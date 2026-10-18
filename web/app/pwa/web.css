@@ -650,3 +650,9 @@ html.web-sheet-open,
 html.web-sheet-open body {
   overflow: hidden;
 }
+
+.web-toast-link {
+  color: var(--primary-accent);
+  font-size: 14px;
+  white-space: nowrap;
+}

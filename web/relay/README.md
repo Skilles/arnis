@@ -35,6 +35,10 @@ Then set `corsRelay` in `web/app/config.js` to
 Import this folder (`web/relay`) as a Vercel project, or run `npx vercel deploy`
 from it. Set `corsRelay` to `https://<project>.vercel.app/api/relay?url=`.
 
+It runs as a regular (Node.js) Vercel Function with up to five minutes per
+request (`vercel.json`). An Edge function would be cut off after 25 seconds
+without a first byte, which slow Overpass queries exceed.
+
 ## Limit who can use it
 
 Set `ALLOWED_ORIGINS` (Cloudflare: in `wrangler.toml` or the dashboard;

@@ -307,7 +307,50 @@
         }
       });
 
-      checkBrowser().then(checkSources);
+      // Starts the real engine the way the app does and reports how far it
+      // gets, which is what to send when the app sits on "Loading".
+      function checkEngine() {
+        if (!self.crossOriginIsolated) {
+          item('browser', 'bad', 'Generator start', 'Skipped: needs cross-origin isolation (reload this page).');
+          return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+          const started = performance.now();
+          const secs = () => ((performance.now() - started) / 1000).toFixed(1);
+          const stages = [];
+          let worker = null;
+          const finish = (state, detail) => {
+            clearTimeout(timer);
+            if (worker) {
+              worker.terminate();
+            }
+            item('browser', state, 'Generator start', detail);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            finish('bad', `Did not start within 90 s. Stages: ${stages.join(' → ') || 'none'}.`);
+          }, 90000);
+          try {
+            worker = new Worker('engine-worker.js', { name: 'arnis-engine-check' });
+          } catch (e) {
+            finish('bad', `Could not start a worker: ${e}`);
+            return;
+          }
+          worker.onmessage = (e) => {
+            const m = e.data || {};
+            if (m.type === 'stage') {
+              stages.push(`${m.text.replace(/…$/, '')} (${secs()} s)`);
+            } else if (m.type === 'ready') {
+              finish('ok', `Ready in ${secs()} s: ${m.pool || '?'} worker threads, ${m.storage} storage, build ${m.build || '?'}.`);
+            } else if (m.type === 'crash') {
+              finish('bad', `Stopped after ${secs()} s: ${m.reason}. Stages: ${stages.join(' → ')}.`);
+            }
+          };
+          worker.onerror = (e) => finish('bad', `Worker error after ${secs()} s: ${e.message || e}`);
+        });
+      }
+
+      checkBrowser().then(checkEngine).then(checkSources);
     })();
   </script>
 </body>

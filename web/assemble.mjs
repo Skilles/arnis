@@ -145,6 +145,9 @@ const shell = walk(dist)
   .map((path) => `./${path}`);
 shell.unshift('./');
 
+const workerPath = join(dist, 'engine-worker.js');
+writeFileSync(workerPath, readFileSync(workerPath, 'utf8').replace('__ARNIS_BUILD__', buildId));
+
 const swPath = join(dist, 'sw.js');
 let sw = readFileSync(swPath, 'utf8');
 sw = sw.replace('__ARNIS_VERSION__', buildId);
