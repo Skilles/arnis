@@ -87,7 +87,9 @@ self.onmessage = (e) => {
   }
 };
 
-const cores = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 32));
+// Cores used at most; must match WEB_MAX_CORES in src/web.rs.
+const MAX_CORES = 12;
+const cores = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, MAX_CORES));
 const phone = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
   (navigator.userAgentData && navigator.userAgentData.mobile === true);
 
@@ -96,7 +98,40 @@ const phone = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
 // threads. A worker started later never runs its thread, so this must not be
 // short; an idle one costs a few MB.
 function poolSize() {
-  return Math.min(2 * cores + 20, 80);
+  return 2 * cores + 20;
+}
+
+// Downloads the engine with progress, so a stall shows where it is. The bytes
+// are handed to Emscripten as wasmBinary; it compiles them itself, because
+// its worker pool only loads a module it instantiated on its own path.
+async function downloadEngine() {
+  const response = await fetch(engineFile('arnis.wasm'));
+  if (!response.ok) {
+    throw new Error(`downloading the generator failed: HTTP ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  let shown = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    chunks.push(value);
+    received += value.length;
+    if (received - shown > 2 * 1048576) {
+      shown = received;
+      stage(`Downloading the generator (${(received / 1048576).toFixed(0)} MB)…`);
+    }
+  }
+  const bytes = new Uint8Array(received);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return bytes;
 }
 
 // The memory budget the generator plans with (MB). Phones close a tab far
@@ -141,6 +176,45 @@ async function probeOpfs() {
   }
 }
 
+// Counts the engine's thread workers as they come up, so a start that stalls
+// while they load says how many made it and why the rest did not.
+function watchThreadWorkers() {
+  const Native = self.Worker;
+  if (typeof Native !== 'function') {
+    return;
+  }
+  let created = 0;
+  let loaded = 0;
+  let lastError = '';
+  const report = () => {
+    if (!ready) {
+      stage(`Starting worker threads (${loaded} of ${created} ready${lastError ? `; error: ${lastError}` : ''})…`);
+    }
+  };
+  self.Worker = function (...args) {
+    const worker = new Native(...args);
+    created++;
+    let first = true;
+    worker.addEventListener('message', () => {
+      if (first) {
+        first = false;
+        loaded++;
+        if (loaded === created || loaded % 8 === 0) {
+          report();
+        }
+      }
+    });
+    worker.addEventListener('error', (e) => {
+      lastError = (e && e.message) || 'failed to load';
+      report();
+    });
+    return worker;
+  };
+  self.Worker.prototype = Native.prototype;
+  // A start that is still waiting after 10 s reports where the count stands.
+  setTimeout(report, 10000);
+}
+
 async function start() {
   if (typeof SharedArrayBuffer === 'undefined' || !self.crossOriginIsolated) {
     crash('This browser did not enable the isolation Arnis needs to run multithreaded (SharedArrayBuffer is unavailable).');
@@ -152,13 +226,17 @@ async function start() {
   self.arnisPoolSize = Number(new URLSearchParams(self.location.search).get('pool')) || poolSize();
 
   stage('Downloading the generator…');
+  watchThreadWorkers();
   importScripts(engineUrl);
+  const wasmBinary = await downloadEngine();
+  stage(`Compiling the generator and starting ${self.arnisPoolSize} worker threads…`);
 
   engine = await createArnisEngine({
     // Emscripten starts its thread workers from this script's URL; inside a
     // worker it cannot work that out by itself.
     mainScriptUrlOrBlob: engineUrl,
     locateFile: (path) => engineFile(path),
+    wasmBinary,
     print: (text) => log('info', text),
     printErr: (text) => log('error', text),
     onAbort: (reason) => crash(`The generator stopped unexpectedly: ${reason}`),
@@ -174,7 +252,7 @@ async function start() {
     ],
   });
 
-  stage(`Starting the generator (${self.arnisPoolSize} threads)…`);
+  stage('Setting up…');
 
   // Set-up runs on an engine thread (it must not block this one) and calls
   // back here when it is done.

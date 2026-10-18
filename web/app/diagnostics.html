@@ -310,9 +310,20 @@
       // Starts the real engine the way the app does and reports how far it
       // gets, which is what to send when the app sits on "Loading".
       function checkEngine() {
+        return startEngine('').then((result) => {
+          // Stalled before the engine's own set-up: try again with a small
+          // pool, which tells starting many workers apart from the rest.
+          if (result && /starting \d+ worker threads/i.test(result.last || '')) {
+            return startEngine('?pool=8', ' (small-pool retry)');
+          }
+          return null;
+        });
+      }
+
+      function startEngine(search, label = '') {
         if (!self.crossOriginIsolated) {
           item('browser', 'bad', 'Generator start', 'Skipped: needs cross-origin isolation (reload this page).');
-          return Promise.resolve();
+          return Promise.resolve(null);
         }
         return new Promise((resolve) => {
           const started = performance.now();
@@ -324,14 +335,14 @@
             if (worker) {
               worker.terminate();
             }
-            item('browser', state, 'Generator start', detail);
-            resolve();
+            item('browser', state, `Generator start${label}`, detail);
+            resolve({ state, last: stages[stages.length - 1] || '' });
           };
           const timer = setTimeout(() => {
             finish('bad', `Did not start within 90 s. Stages: ${stages.join(' → ') || 'none'}.`);
           }, 90000);
           try {
-            worker = new Worker('engine-worker.js', { name: 'arnis-engine-check' });
+            worker = new Worker(`engine-worker.js${search}`, { name: 'arnis-engine-check' });
           } catch (e) {
             finish('bad', `Could not start a worker: ${e}`);
             return;
@@ -339,7 +350,13 @@
           worker.onmessage = (e) => {
             const m = e.data || {};
             if (m.type === 'stage') {
-              stages.push(`${m.text.replace(/…$/, '')} (${secs()} s)`);
+              // Download progress replaces itself rather than filling the line.
+              const text = `${m.text.replace(/…$/, '')} (${secs()} s)`;
+              if (stages.length && /^Downloading the generator \(/.test(m.text) && /^Downloading the generator/.test(stages[stages.length - 1])) {
+                stages[stages.length - 1] = text;
+              } else {
+                stages.push(text);
+              }
             } else if (m.type === 'ready') {
               finish('ok', `Ready in ${secs()} s: ${m.pool || '?'} worker threads, ${m.storage} storage, build ${m.build || '?'}.`);
             } else if (m.type === 'crash') {

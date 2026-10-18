@@ -20,6 +20,9 @@ use std::path::Path;
 pub const WORLDS_DIR: &str = "/data/worlds";
 /// Bedrock `.mcworld` files land here.
 pub const EXPORTS_DIR: &str = "/data/exports";
+/// Cores the browser build uses at most. Must match `MAX_CORES` in
+/// web/app/engine-worker.js, which sizes the worker pool from it.
+pub const WEB_MAX_CORES: usize = 12;
 /// `dirs::cache_dir()` points here, so the tile caches persist as well.
 pub const CACHE_DIR: &str = "/data/cache";
 
@@ -209,7 +212,11 @@ pub extern "C" fn arnis_web_init() {
 
             crate::progress::set_main_window(BrowserWindow);
             crate::telemetry::install_panic_hook();
-            crate::floodfill_cache::configure_rayon_thread_pool(1.0);
+            // At most WEB_MAX_CORES threads: every thread needs a worker from the
+            // fixed pool, and past a dozen a browser gains little.
+            let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+            let fraction = (WEB_MAX_CORES.min(cores) as f64 / cores as f64).max(0.1);
+            crate::floodfill_cache::configure_rayon_thread_pool(fraction);
             crate::elevation_data::cleanup_old_cached_tiles();
 
             println!("Arnis web engine ready (storage: {storage}).");
