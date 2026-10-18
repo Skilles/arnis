@@ -143,9 +143,19 @@ export async function handleRelay(request, allowedOrigins = []) {
   for (const [name, value] of Object.entries(corsHeaders(origin))) {
     out.set(name, value);
   }
-  // Successful whole-file responses from these hosts change rarely.
-  if (response.status === 200 || response.status === 206) {
+  // A shared cache (Vercel's CDN, Cloudflare's) keys on the URL alone, and
+  // every range of one file has the same URL here, so a cached 206 would be
+  // served for every other range. Ranged answers are therefore kept out of
+  // shared caches; whole files from these hosts change rarely and may stay.
+  const ranged = response.status === 206 || request.headers.has('Range');
+  if (ranged) {
+    out.set('Cache-Control', 'private, no-store');
+    out.set('CDN-Cache-Control', 'no-store');
+    out.set('Vercel-CDN-Cache-Control', 'no-store');
+  } else if (response.status === 200) {
     out.set('Cache-Control', 'public, max-age=86400');
+  } else {
+    out.set('Cache-Control', 'no-store');
   }
 
   return new Response(response.body, { status: response.status, headers: out });
