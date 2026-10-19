@@ -313,7 +313,7 @@
         return startEngine('').then((result) => {
           // Stalled before the engine's own set-up: try again with a small
           // pool, which tells starting many workers apart from the rest.
-          if (result && /starting \d+ worker threads/i.test(result.last || '')) {
+          if (result && /worker threads/i.test(result.last || '')) {
             return startEngine('?pool=8', ' (small-pool retry)');
           }
           return null;

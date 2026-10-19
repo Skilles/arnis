@@ -30,6 +30,17 @@ const BUILD = '__ARNIS_BUILD__';
 const engineFile = (name) => new URL(`engine/${name}?v=${encodeURIComponent(BUILD)}`, base).href;
 const engineUrl = engineFile('arnis.js');
 
+// Emscripten starts every engine thread from the script that loaded the
+// engine, so this file also runs as each thread's worker. There it must hand
+// over to the engine at once: the engine's 'load' message can arrive as soon
+// as the worker exists, and if this script were still busy (checking storage,
+// downloading) the message would land in its own handler and be lost, leaving
+// the generator waiting for that thread forever.
+const IS_ENGINE_THREAD = self.name === 'em-pthread';
+if (IS_ENGINE_THREAD) {
+  importScripts(engineUrl);
+}
+
 let engine = null;
 let ready = false;
 const queued = [];
@@ -47,8 +58,10 @@ function crash(reason) {
   postMessage({ type: 'crash', reason: String(reason) });
 }
 
-self.addEventListener('error', (e) => crash(e.message || e));
-self.addEventListener('unhandledrejection', (e) => crash(e.reason || 'unhandled rejection'));
+if (!IS_ENGINE_THREAD) {
+  self.addEventListener('error', (e) => crash(e.message || e));
+  self.addEventListener('unhandledrejection', (e) => crash(e.reason || 'unhandled rejection'));
+}
 
 // Copies a byte array into the engine's heap; the caller frees it.
 function toHeap(bytes) {
@@ -75,17 +88,19 @@ function invoke({ id, cmd, args }) {
   }
 }
 
-self.onmessage = (e) => {
-  const msg = e.data;
-  if (!msg || msg.type !== 'invoke') {
-    return;
-  }
-  if (ready) {
-    invoke(msg);
-  } else {
-    queued.push(msg);
-  }
-};
+if (!IS_ENGINE_THREAD) {
+  self.onmessage = (e) => {
+    const msg = e.data;
+    if (!msg || msg.type !== 'invoke') {
+      return;
+    }
+    if (ready) {
+      invoke(msg);
+    } else {
+      queued.push(msg);
+    }
+  };
+}
 
 // Cores used at most; must match WEB_MAX_CORES in src/web.rs.
 const MAX_CORES = 12;
@@ -194,10 +209,11 @@ function watchThreadWorkers() {
   self.Worker = function (...args) {
     const worker = new Native(...args);
     created++;
-    let first = true;
-    worker.addEventListener('message', () => {
-      if (first) {
-        first = false;
+    let counted = false;
+    worker.addEventListener('message', (e) => {
+      // The engine's "this worker has loaded" message.
+      if (!counted && e.data && e.data.cmd === 3) {
+        counted = true;
         loaded++;
         if (loaded === created || loaded % 8 === 0) {
           report();
@@ -229,7 +245,7 @@ async function start() {
   watchThreadWorkers();
   importScripts(engineUrl);
   const wasmBinary = await downloadEngine();
-  stage(`Compiling the generator and starting ${self.arnisPoolSize} worker threads…`);
+  stage(`Compiling the generator (${(wasmBinary.length / 1048576).toFixed(0)} MB)…`);
 
   engine = await createArnisEngine({
     // Emscripten starts its thread workers from this script's URL; inside a
@@ -272,4 +288,6 @@ async function start() {
   engine._arnis_web_init();
 }
 
-start().catch((e) => crash(e && e.message ? e.message : e));
+if (!IS_ENGINE_THREAD) {
+  start().catch((e) => crash(e && e.message ? e.message : e));
+}
