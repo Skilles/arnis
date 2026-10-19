@@ -11,16 +11,27 @@ const MAX_CONCURRENT_REQUESTS: usize = 16;
 
 /// Download pools in the browser build. Every thread there is a Web Worker
 /// started ahead of time from a fixed pool (one started on demand never
-/// runs), and each blocks on its request, so a few per provider is plenty.
+/// runs), so the page sizes that pool for this many per provider and says so
+/// in `ARNIS_WEB_DOWNLOAD_THREADS`: a phone gets few, a desktop enough to keep
+/// a large area's thousands of terrain tiles from taking many minutes.
 #[cfg(target_os = "emscripten")]
-const WEB_POOL_THREADS: usize = 3;
+fn web_pool_threads() -> usize {
+    static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THREADS.get_or_init(|| {
+        std::env::var("ARNIS_WEB_DOWNLOAD_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(3)
+            .clamp(1, 8)
+    })
+}
 
 /// How many threads a download pool that would like `wanted` should start.
 /// Unchanged natively; capped in the browser build.
 pub fn pool_threads(wanted: usize) -> usize {
     #[cfg(target_os = "emscripten")]
     {
-        wanted.clamp(1, WEB_POOL_THREADS)
+        wanted.clamp(1, web_pool_threads())
     }
     #[cfg(not(target_os = "emscripten"))]
     {

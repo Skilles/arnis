@@ -120,6 +120,11 @@
       case 'log':
         if (msg.level === 'error') {
           console.warn('[engine]', msg.text);
+          // Rust reports a failed allocation here just before it aborts with
+          // a reason that no longer mentions memory.
+          if (/memory allocation of \d+ bytes failed|Cannot enlarge memory|out of memory/i.test(msg.text)) {
+            lastOomAt = Date.now();
+          }
         } else {
           console.log('[engine]', msg.text);
         }
@@ -131,6 +136,8 @@
         break;
     }
   }
+
+  let lastOomAt = 0;
 
   function onCrash(reason) {
     console.error('Arnis engine crashed:', reason);
@@ -153,7 +160,7 @@
       endGeneration();
       emit('progress-update', {
         progress: 0,
-        message: /memory|allocat|OOM/i.test(String(reason))
+        message: /memory|allocat|OOM/i.test(String(reason)) || Date.now() - lastOomAt < 15000
           ? 'Error! Out of memory. Try a smaller area.'
           : 'Error! The generator stopped unexpectedly.',
       });

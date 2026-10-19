@@ -108,12 +108,19 @@ const cores = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, MAX_CORES
 const phone = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
   (navigator.userAgentData && navigator.userAgentData.mobile === true);
 
+// Threads per download pool (terrain tiles, buildings, photos); read by the
+// engine as ARNIS_WEB_DOWNLOAD_THREADS. Each is a worker held for the whole
+// session, which a phone can spare fewer of.
+function downloadThreads() {
+  return phone ? 3 : 8;
+}
+
 // Workers for every thread a generation runs at its busiest: a pool per core
-// (generation, tile placement), a few download pools and the coordinating
-// threads. A worker started later never runs its thread, so this must not be
-// short; an idle one costs a few MB.
+// (generation, tile placement), a few download pools side by side and the
+// coordinating threads. A worker started later never runs its thread, so this
+// must not be short; an idle one costs a few MB.
 function poolSize() {
-  return 2 * cores + 20;
+  return 2 * cores + 20 + 3 * (downloadThreads() - 3);
 }
 
 // Downloads the engine with progress, so a stall shows where it is. The bytes
@@ -264,6 +271,7 @@ async function start() {
         }
         module.ENV.RUST_BACKTRACE = '1';
         module.ENV.ARNIS_WEB_MEMORY_MB = String(Math.round(memoryBudgetMb()));
+        module.ENV.ARNIS_WEB_DOWNLOAD_THREADS = String(downloadThreads());
       },
     ],
   });

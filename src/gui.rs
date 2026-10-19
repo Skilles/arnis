@@ -1551,6 +1551,10 @@ fn gui_start_generation(
         // Held until the worker finishes, on every path, so the globals stay this run's.
         let _generation_slot = generation_slot;
         if let Err(e) = rt::spawn_blocking(move || {
+            // A previous run may have stopped its downloads early (see below).
+            #[cfg(target_os = "emscripten")]
+            reqwest::abort_new_requests(false);
+
             let world_path = if one_world {
                 one_world_dir(&selected_world, &one_world_name)
             } else {
@@ -2010,6 +2014,17 @@ fn gui_start_generation(
                     });
                 }
                 drop(peak_tx);
+                // Without map data the run is over, but the terrain download
+                // may have many minutes left; in the browser, where it is
+                // slowest, stop it instead of making the user wait to be told.
+                #[cfg(target_os = "emscripten")]
+                if fetch_result.is_err() {
+                    reqwest::abort_new_requests(true);
+                    emit_gui_progress_update(
+                        progress::MESSAGE_ONLY,
+                        "Could not download the map data; stopping...",
+                    );
+                }
                 // A panicked worker already reported itself through the panic hook.
                 // Overture is supplementary, so drop it and keep going; terrain is
                 // not, so hand the failure back instead of taking the app down.

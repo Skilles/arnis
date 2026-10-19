@@ -313,6 +313,20 @@ impl Method {
     }
 }
 
+static ABORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// While set, every new request fails at once instead of going out.
+///
+/// The generator downloads several sources side by side and only looks at
+/// their results once all of them are in, so when one that the run cannot do
+/// without has already failed, the others would otherwise keep downloading for
+/// many minutes before the failure is reported. The browser build sets this
+/// then, and clears it when the next generation starts. Requests already in
+/// flight finish normally.
+pub fn abort_new_requests(on: bool) {
+    ABORTED.store(on, std::sync::atomic::Ordering::Release);
+}
+
 /// Everything JavaScript needs to perform one request.
 #[derive(serde::Serialize)]
 struct WireRequest<'a> {
@@ -343,6 +357,14 @@ fn perform(
     body: Option<&[u8]>,
     timeout: Option<Duration>,
 ) -> Result<Response> {
+    if ABORTED.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(Error::new(
+            ErrorKind::Request,
+            Some(url),
+            "cancelled: the generation is stopping",
+        ));
+    }
+
     let request = WireRequest {
         method: method.as_str(),
         url,
@@ -362,6 +384,13 @@ fn perform(
     } else {
         serde_json::from_slice(&raw.head).unwrap_or_default()
     };
+
+    if !matches!(raw.outcome, ffi::Outcome::Completed) {
+        // The callers print a one-line summary ("No internet connection.");
+        // the browser's own account goes to the log for anyone diagnosing it.
+        let host = url.split('/').nth(2).unwrap_or(url);
+        eprintln!("Request to {host} failed: {}", head.error);
+    }
 
     match raw.outcome {
         ffi::Outcome::Completed => {}

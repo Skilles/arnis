@@ -242,7 +242,21 @@ fn fetch_level(
     state: &mut PyramidState,
     absent: &mut Vec<TileKey>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut done = 0usize;
     for chunk in keys.chunks(DOWNLOAD_CHUNK_SIZE) {
+        // A large level takes minutes on a slow link (and in the browser);
+        // without a count the status line looks frozen meanwhile.
+        if keys.len() > DOWNLOAD_CHUNK_SIZE {
+            crate::progress::emit_gui_progress_update(
+                crate::progress::MESSAGE_ONLY,
+                &format!(
+                    "Downloading data... (elevation tiles: {} of {})",
+                    done,
+                    keys.len()
+                ),
+            );
+        }
+        done += chunk.len();
         let results: Vec<(TileKey, TileFetch)> = pool.install(|| {
             chunk
                 .par_iter()

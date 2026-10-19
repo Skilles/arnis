@@ -134,6 +134,26 @@ pub const MAX_ELEVATION_GRID_DIM: usize = 16384;
 /// and shrinking both axes by the same factor keeps sampling isotropic at the same memory.
 pub const MAX_ELEVATION_GRID_CELLS: usize = MAX_ELEVATION_GRID_DIM * MAX_ELEVATION_GRID_DIM;
 
+/// The cell budget in force. The browser build has a 4 GB address space shared
+/// with everything else a generation holds, where the full budget's ~6.5 GB
+/// peak cannot fit, so there the grid gets about a quarter of the memory budget
+/// the page sets (`ARNIS_WEB_MEMORY_MB`) at the ~25 bytes per cell that peak
+/// costs. Terrain past that is filled by bilinear interpolation, as above.
+fn max_elevation_grid_cells() -> usize {
+    #[cfg(target_os = "emscripten")]
+    {
+        let budget_mb = std::env::var("ARNIS_WEB_MEMORY_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(1024);
+        (budget_mb * 1_048_576 / 100).clamp(1 << 20, MAX_ELEVATION_GRID_CELLS)
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        MAX_ELEVATION_GRID_CELLS
+    }
+}
+
 /// Compute world and grid dimensions for the given bbox and scale.
 ///
 /// Exposed so callers (e.g. `Ground::new_enabled`) can fetch land cover at the
@@ -163,7 +183,7 @@ pub fn compute_grid_dims_for_world(
     let mut grid_width: usize = world_width.max(2);
     let mut grid_height: usize = world_height.max(2);
     let cells = grid_width as f64 * grid_height as f64;
-    let budget_shrink = (cells / MAX_ELEVATION_GRID_CELLS as f64).sqrt();
+    let budget_shrink = (cells / max_elevation_grid_cells() as f64).sqrt();
     // A long thin bbox stays under the cell budget while still running far past the per-axis
     // cap, so both limits have to feed the same factor.
     let axis_shrink = grid_width.max(grid_height) as f64 / MAX_ELEVATION_GRID_DIM as f64;

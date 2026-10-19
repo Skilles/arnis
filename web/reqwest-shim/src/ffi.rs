@@ -9,9 +9,12 @@
 //! u32 status    HTTP status, 0 when not completed
 //! u32 head_len  length of the JSON head
 //! u32 body_len  length of the body
+//! u32 body_ptr  a separate malloc'd buffer holding the body, 0 when empty
 //! [head_len]    JSON {"url": "...", "headers": [["k","v"],...], "error": "..."}
-//! [body_len]    the response body
 //! ```
+//!
+//! The body buffer becomes the response's `Vec` as it is, so a large body is
+//! never held twice.
 
 #[cfg_attr(not(target_os = "emscripten"), allow(dead_code))]
 pub enum Outcome {
@@ -65,14 +68,22 @@ mod imp {
                     body: Vec::new(),
                 };
             }
-            let header = std::slice::from_raw_parts(ptr, 16);
+            let header = std::slice::from_raw_parts(ptr, 20);
             let outcome = read_u32(header, 0);
             let status = read_u32(header, 4);
             let head_len = read_u32(header, 8) as usize;
             let body_len = read_u32(header, 12) as usize;
-            let head = std::slice::from_raw_parts(ptr.add(16), head_len).to_vec();
-            let body = std::slice::from_raw_parts(ptr.add(16 + head_len), body_len).to_vec();
+            let body_ptr = read_u32(header, 16) as usize as *mut u8;
+            let head = std::slice::from_raw_parts(ptr.add(20), head_len).to_vec();
             free(ptr.cast());
+            // The system allocator, which this build uses, allocates byte
+            // buffers with malloc and frees them with free, so a malloc'd
+            // buffer of exactly body_len bytes is a valid Vec<u8> allocation.
+            let body = if body_ptr.is_null() || body_len == 0 {
+                Vec::new()
+            } else {
+                Vec::from_raw_parts(body_ptr, body_len, body_len)
+            };
             RawResponse {
                 outcome: match outcome {
                     0 => Outcome::Completed,

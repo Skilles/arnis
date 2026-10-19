@@ -17,22 +17,37 @@ addToLibrary({
     return new TextDecoder().decode(HEAPU8.slice(ptr, ptr + len));
   },
 
-  $arnisWriteResponse__deps: ['malloc'],
+  // The body gets an allocation of its own, which Rust adopts as its Vec
+  // without copying: a large area's map data is hundreds of MB.
+  $arnisWriteResponse__deps: ['malloc', 'free'],
   $arnisWriteResponse: (outcome, status, head, body) => {
-    const headBytes = new TextEncoder().encode(JSON.stringify(head));
     const bodyBytes = body ? new Uint8Array(body) : new Uint8Array(0);
-    const total = 16 + headBytes.length + bodyBytes.length;
-    const ptr = _malloc(total);
+    let bodyPtr = 0;
+    if (bodyBytes.length > 0) {
+      bodyPtr = _malloc(bodyBytes.length);
+      if (!bodyPtr) {
+        outcome = 3;
+        status = 0;
+        head = { error: `not enough memory for a ${(bodyBytes.length / 1048576).toFixed(0)} MB response` };
+      } else {
+        HEAPU8.set(bodyBytes, bodyPtr);
+      }
+    }
+    const headBytes = new TextEncoder().encode(JSON.stringify(head));
+    const ptr = _malloc(20 + headBytes.length);
     if (!ptr) {
+      if (bodyPtr) {
+        _free(bodyPtr);
+      }
       return 0;
     }
-    const view = new DataView(HEAPU8.buffer, ptr, 16);
+    const view = new DataView(HEAPU8.buffer, ptr, 20);
     view.setUint32(0, outcome, true);
     view.setUint32(4, status, true);
     view.setUint32(8, headBytes.length, true);
-    view.setUint32(12, bodyBytes.length, true);
-    HEAPU8.set(headBytes, ptr + 16);
-    HEAPU8.set(bodyBytes, ptr + 16 + headBytes.length);
+    view.setUint32(12, bodyPtr ? bodyBytes.length : 0, true);
+    view.setUint32(16, bodyPtr, true);
+    HEAPU8.set(headBytes, ptr + 20);
     return ptr;
   },
 
@@ -58,6 +73,8 @@ addToLibrary({
   $arnisXhr__deps: ['$arnisParseHeaders', '$arnisForbiddenHeaders'],
   $arnisXhr: (req, url, body) => {
     const xhr = new XMLHttpRequest();
+    const started = Date.now();
+    const took = () => `after ${((Date.now() - started) / 1000).toFixed(1)} s`;
     try {
       xhr.open(req.method, url, false);
       xhr.responseType = 'arraybuffer';
@@ -75,7 +92,7 @@ addToLibrary({
       return {
         outcome: name === 'TimeoutError' ? 1 : 2,
         status: 0,
-        head: { error: `${name || 'Error'}: ${e && e.message ? e.message : e}` },
+        head: { error: `${name || 'Error'} ${took()}: ${String(e && e.message ? e.message : e).slice(0, 160)}` },
         body: null,
       };
     }
@@ -84,7 +101,7 @@ addToLibrary({
       return {
         outcome: 2,
         status: 0,
-        head: { error: 'network error (offline, or the server does not allow cross-origin requests)' },
+        head: { error: `network error ${took()} (offline, or the server does not allow cross-origin requests)` },
         body: null,
       };
     }
@@ -146,6 +163,11 @@ addToLibrary({
         if (relayed.outcome === 0) {
           relayed.head.url = req.url;
           viaRelay.add(host);
+          result = relayed;
+        } else {
+          // The direct failure was expected (no CORS headers); the relay's is
+          // the one that explains what went wrong.
+          relayed.head.error = `via relay: ${relayed.head.error || 'failed'}`;
           result = relayed;
         }
       }
