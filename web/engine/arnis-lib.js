@@ -21,7 +21,7 @@ addToLibrary({
   // without copying: a large area's map data is hundreds of MB.
   $arnisWriteResponse__deps: ['malloc', 'free'],
   $arnisWriteResponse: (outcome, status, head, body) => {
-    const bodyBytes = body ? new Uint8Array(body) : new Uint8Array(0);
+    const bodyBytes = !body ? new Uint8Array(0) : body instanceof Uint8Array ? body : new Uint8Array(body);
     let bodyPtr = 0;
     if (bodyBytes.length > 0) {
       bodyPtr = _malloc(bodyBytes.length);
@@ -113,7 +113,49 @@ addToLibrary({
     };
   },
 
-  arnis_http_request__deps: ['$arnisBytesToString', '$arnisWriteResponse', '$arnisXhr'],
+  // Unwraps the relay's deferred format (see web/relay/relay.js): spaces sent
+  // while the upstream worked, a JSON line with its status and headers, then
+  // its body.
+  $arnisUnwrapDeferred: (result) => {
+    if (result.outcome !== 0 || !result.body) {
+      return result;
+    }
+    const deferred = result.head.headers.some(([k, v]) => k === 'x-relay-deferred' && v === '1');
+    if (!deferred) {
+      return result;
+    }
+    const bytes = new Uint8Array(result.body);
+    let start = 0;
+    while (start < bytes.length && bytes[start] === 0x20) {
+      start++;
+    }
+    const end = bytes.indexOf(0x0a, start);
+    let info = null;
+    try {
+      info = end < 0 ? null : JSON.parse(new TextDecoder().decode(bytes.subarray(start, end)));
+    } catch (e) {
+      info = null;
+    }
+    if (!info) {
+      return {
+        outcome: 2,
+        status: 0,
+        head: { error: 'the relay answer ended before the server replied' },
+        body: null,
+      };
+    }
+    if (info.error) {
+      return { outcome: 0, status: info.status || 502, head: { url: result.head.url, headers: [] }, body: new TextEncoder().encode(info.error) };
+    }
+    return {
+      outcome: 0,
+      status: info.status,
+      head: { url: result.head.url, headers: info.headers || [] },
+      body: bytes.subarray(end + 1),
+    };
+  },
+
+  arnis_http_request__deps: ['$arnisBytesToString', '$arnisWriteResponse', '$arnisXhr', '$arnisUnwrapDeferred'],
   arnis_http_request__sig: 'ppppp',
   arnis_http_request: (reqPtr, reqLen, bodyPtr, bodyLen) => {
     let req;
@@ -136,6 +178,9 @@ addToLibrary({
       // Not an absolute URL; the request will fail on its own.
     }
     const viaRelay = (globalThis.arnisRelayHosts ||= new Set());
+    // The relay may answer a slow host in its deferred format, which keeps
+    // the connection busy while that host works on a large request.
+    const relayed = () => arnisUnwrapDeferred(arnisXhr(req, `${relay}${encodeURIComponent(req.url)}&deferred=1`, body));
 
     let result = null;
     // One more try after a short pause when the network itself failed: a
@@ -152,24 +197,23 @@ addToLibrary({
       return attempt();
     };
     if (relay && host && viaRelay.has(host)) {
-      result = retryOnce(() => arnisXhr(req, relay + encodeURIComponent(req.url), body));
+      result = retryOnce(relayed);
       if (result.outcome === 0) {
         result.head.url = req.url;
       }
     } else {
       result = arnisXhr(req, req.url, body);
       if (result.outcome === 2 && relay && host) {
-        const relayed = retryOnce(() => arnisXhr(req, relay + encodeURIComponent(req.url), body));
-        if (relayed.outcome === 0) {
-          relayed.head.url = req.url;
+        const viaRelayResult = retryOnce(relayed);
+        if (viaRelayResult.outcome === 0) {
+          viaRelayResult.head.url = req.url;
           viaRelay.add(host);
-          result = relayed;
         } else {
           // The direct failure was expected (no CORS headers); the relay's is
           // the one that explains what went wrong.
-          relayed.head.error = `via relay: ${relayed.head.error || 'failed'}`;
-          result = relayed;
+          viaRelayResult.head.error = `via relay: ${viaRelayResult.head.error || 'failed'}`;
         }
+        result = viaRelayResult;
       }
     }
 

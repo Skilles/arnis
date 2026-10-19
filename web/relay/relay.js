@@ -40,6 +40,17 @@ const EXPOSED_RESPONSE_HEADERS = [
   'retry-after',
 ].join(', ');
 
+// Hosts whose answers can take a long time to start: an Overpass query for a
+// large area may compute for a minute before its first byte. Some browsers
+// and networks drop a request that has received nothing for 30-60 s, so for
+// these the relay answers at once and keeps the line busy while it waits (see
+// deferredResponse). Only when the caller asks with &deferred=1, since the
+// body then has to be unwrapped.
+const DEFERRED_HOSTS = new Set(['api.arnismc.com']);
+
+// How often a waiting deferred response sends a byte.
+const KEEPALIVE_MS = 5000;
+
 const MAX_REDIRECTS = 5;
 
 function corsHeaders(origin) {
@@ -47,7 +58,7 @@ function corsHeaders(origin) {
     'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Range, Content-Type, Accept, If-None-Match, If-Modified-Since',
-    'Access-Control-Expose-Headers': EXPOSED_RESPONSE_HEADERS,
+    'Access-Control-Expose-Headers': `${EXPOSED_RESPONSE_HEADERS}, x-relay-deferred`,
     'Access-Control-Max-Age': '86400',
     'Cross-Origin-Resource-Policy': 'cross-origin',
     Vary: 'Origin',
@@ -109,6 +120,12 @@ export async function handleRelay(request, allowedOrigins = []) {
 
   const body = request.method === 'POST' ? await request.arrayBuffer() : undefined;
 
+  const wantsDeferred = new URL(request.url).searchParams.get('deferred') === '1';
+  if (wantsDeferred && request.method !== 'HEAD' && !request.headers.has('Range') &&
+    url.protocol === 'https:' && DEFERRED_HOSTS.has(url.hostname)) {
+    return deferredResponse(request, url, headers, body, origin);
+  }
+
   // Redirects are followed by hand so that every hop is checked against the
   // allowlist (Wikimedia Commons redirects to upload.wikimedia.org).
   let response;
@@ -165,6 +182,194 @@ export async function handleRelay(request, allowedOrigins = []) {
   }
 
   return new Response(response.body, { status: response.status, headers: out });
+}
+
+/*
+ * A response that starts at once, for a slow upstream.
+ *
+ * The body is: a space every few seconds while the upstream works, then one
+ * line of JSON {"status": <upstream status>, "headers": [[name, value], ...]}
+ * (or {"status": 502, "error": "..."}), a newline, and the upstream body as
+ * is. The page's HTTP bridge unwraps it (web/engine/arnis-lib.js).
+ *
+ * It is gzipped here, flushed after every write: a platform that compressed
+ * it would hold the spaces back until it had enough to compress, which would
+ * defeat them, and the bodies these hosts send (Overpass JSON) shrink about
+ * tenfold.
+ */
+async function deferredResponse(request, url, headers, body, origin) {
+  let zlib = null;
+  if (/\bgzip\b/.test(request.headers.get('Accept-Encoding') || '')) {
+    try {
+      zlib = await import('node:zlib');
+    } catch {
+      zlib = null;
+    }
+  }
+  const encoder = new TextEncoder();
+  let controller;
+  let pullWaiter = null;
+  const stream = new ReadableStream(
+    {
+      start(c) {
+        controller = c;
+      },
+      pull() {
+        if (pullWaiter) {
+          pullWaiter();
+          pullWaiter = null;
+        }
+      },
+      cancel() {
+        aborted = true;
+        clearInterval(timer);
+        upstreamAbort.abort();
+        if (pullWaiter) {
+          pullWaiter();
+          pullWaiter = null;
+        }
+      },
+    },
+    { highWaterMark: 4 },
+  );
+  let aborted = false;
+  const upstreamAbort = new AbortController();
+  const roomToWrite = () => {
+    if (aborted || controller.desiredSize > 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      pullWaiter = resolve;
+    });
+  };
+
+  // write(bytes) sends bytes on, compressed and flushed when possible.
+  let write;
+  let finish;
+  if (zlib) {
+    const gz = zlib.createGzip({ level: 4 });
+    gz.on('data', (chunk) => {
+      if (!aborted) {
+        controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      }
+    });
+    const ended = new Promise((resolve) => gz.on('end', resolve));
+    write = async (bytes, flush) => {
+      await roomToWrite();
+      if (!gz.write(bytes)) {
+        await new Promise((resolve) => gz.once('drain', resolve));
+      }
+      if (flush) {
+        await new Promise((resolve) => gz.flush(zlib.constants.Z_SYNC_FLUSH, resolve));
+      }
+    };
+    finish = async () => {
+      gz.end();
+      await ended;
+    };
+  } else {
+    write = async (bytes) => {
+      await roomToWrite();
+      if (!aborted) {
+        controller.enqueue(bytes);
+      }
+    };
+    finish = async () => {};
+  }
+
+  // Writes are chained so a keep-alive never lands inside the body.
+  let chain = Promise.resolve();
+  const queue = (bytes, flush) => {
+    chain = chain.then(() => (aborted ? undefined : write(bytes, flush)));
+    return chain;
+  };
+  const space = encoder.encode(' ');
+  let waiting = true;
+  const timer = setInterval(() => {
+    if (waiting) {
+      queue(space, true);
+    }
+  }, KEEPALIVE_MS);
+  queue(space, true);
+
+  (async () => {
+    let response = null;
+    let error = '';
+    try {
+      for (let hop = 0; ; hop++) {
+        if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.hostname)) {
+          error = `Host not allowed: ${url.hostname}`;
+          break;
+        }
+        response = await fetch(url.toString(), {
+          method: request.method,
+          headers,
+          body,
+          redirect: 'manual',
+          signal: upstreamAbort.signal,
+        });
+        const location = response.headers.get('Location');
+        if (response.status >= 300 && response.status < 400 && location) {
+          if (hop >= MAX_REDIRECTS) {
+            error = 'Too many redirects.';
+            response = null;
+            break;
+          }
+          url = new URL(location, url);
+          continue;
+        }
+        break;
+      }
+    } catch (e) {
+      response = null;
+      error = `Could not reach ${url.hostname}: ${e && e.message ? e.message : e}`;
+    }
+    waiting = false;
+    clearInterval(timer);
+
+    try {
+      if (!response) {
+        await queue(encoder.encode(`${JSON.stringify({ status: 502, error })}\n`), false);
+      } else {
+        const head = [];
+        for (const name of EXPOSED_RESPONSE_HEADERS.split(', ')) {
+          const value = response.headers.get(name);
+          if (value && name !== 'content-length') {
+            head.push([name, value]);
+          }
+        }
+        await queue(encoder.encode(`${JSON.stringify({ status: response.status, headers: head })}\n`), false);
+        if (response.body) {
+          const reader = response.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done || aborted) {
+              break;
+            }
+            await queue(value, false);
+          }
+        }
+      }
+      await chain;
+      await finish();
+    } catch (e) {
+      // The client has the status already; a cut-short body is what it sees.
+    }
+    if (!aborted) {
+      controller.close();
+    }
+  })();
+
+  const out = new Headers(corsHeaders(origin));
+  out.set('Content-Type', 'text/plain; charset=x-user-defined');
+  out.set('X-Relay-Deferred', '1');
+  out.set('Cache-Control', 'no-store');
+  out.set('CDN-Cache-Control', 'no-store');
+  out.set('Vercel-CDN-Cache-Control', 'no-store');
+  if (zlib) {
+    out.set('Content-Encoding', 'gzip');
+  }
+  return new Response(stream, { status: 200, headers: out });
 }
 
 // Cloudflare Workers entry point. Set the ALLOWED_ORIGINS variable (comma
