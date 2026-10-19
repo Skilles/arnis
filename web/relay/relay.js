@@ -116,12 +116,18 @@ export async function handleRelay(request, allowedOrigins = []) {
     if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.hostname)) {
       return refuse(403, `Host not allowed: ${url.hostname}`, origin);
     }
-    response = await fetch(url.toString(), {
-      method: request.method,
-      headers,
-      body,
-      redirect: 'manual',
-    });
+    try {
+      response = await fetch(url.toString(), {
+        method: request.method,
+        headers,
+        body,
+        redirect: 'manual',
+      });
+    } catch (e) {
+      // Answer with CORS headers either way: a crash would surface as the
+      // platform's own error page, which the browser reports as "offline".
+      return refuse(502, `Could not reach ${url.hostname}: ${e && e.message ? e.message : e}`, origin);
+    }
     const location = response.headers.get('Location');
     if (response.status >= 300 && response.status < 400 && location) {
       if (hop >= MAX_REDIRECTS) {

@@ -121,15 +121,28 @@ addToLibrary({
     const viaRelay = (globalThis.arnisRelayHosts ||= new Set());
 
     let result = null;
+    // One more try after a short pause when the network itself failed: a
+    // passing hiccup on the way to a data host should not end a generation.
+    const retryOnce = (attempt) => {
+      const first = attempt();
+      if (first.outcome !== 2) {
+        return first;
+      }
+      const until = Date.now() + 1500;
+      while (Date.now() < until) {
+        // Synchronous request on a worker thread; a short busy wait is fine.
+      }
+      return attempt();
+    };
     if (relay && host && viaRelay.has(host)) {
-      result = arnisXhr(req, relay + encodeURIComponent(req.url), body);
+      result = retryOnce(() => arnisXhr(req, relay + encodeURIComponent(req.url), body));
       if (result.outcome === 0) {
         result.head.url = req.url;
       }
     } else {
       result = arnisXhr(req, req.url, body);
       if (result.outcome === 2 && relay && host) {
-        const relayed = arnisXhr(req, relay + encodeURIComponent(req.url), body);
+        const relayed = retryOnce(() => arnisXhr(req, relay + encodeURIComponent(req.url), body));
         if (relayed.outcome === 0) {
           relayed.head.url = req.url;
           viaRelay.add(host);
